@@ -69,16 +69,7 @@ func analyze(ctx context.Context, paths []string, cwd string, opts options, r *r
 					}
 				}
 			case *ast.TypeSpec:
-				// Exclude only the declared name, not alias or type parameters.
-				var params, rhs *tree
-				params, err = n.node(v.TypeParams)
-				if err == nil {
-					rhs, err = n.node(v.Type)
-				}
-				if err == nil {
-					normalized = ts.node(fmt.Sprintf("Type:alias=%t", v.Assign.IsValid()),
-						ts.node("TypeParams", params), ts.node("Type", rhs))
-				}
+				normalized, err = n.node(v)
 			}
 			if err != nil {
 				r.diagnose("error", "normalize", name, d.Name, err.Error())
@@ -110,7 +101,6 @@ func analyze(ctx context.Context, paths []string, cwd string, opts options, r *r
 				}
 			case *ast.TypeSpec:
 				if !opts.noTypes {
-					n.self = b.idents[v.Name]
 					add(v, declaration{Kind: "type", Name: v.Name.Name, TypeKind: typeKind(v.Type), Alias: v.Assign.IsValid()}, n)
 				}
 			}
