@@ -63,16 +63,9 @@ func (n *normalizer) nodeRole(node ast.Node, role string) (*tree, error) {
 	case *ast.Ident:
 		return n.trees.node(role + "|" + n.ident(v)), nil
 	case *ast.BasicLit:
-		value := v.Value
-		if v.Kind == token.STRING && len(value) > 0 && value[0] == '`' && n.file != nil {
-			// The scanner removes CR characters from raw strings, so Value
-			// and End cannot recover their exact source spelling.
-			start := n.file.Offset(v.Pos())
-			end := bytes.IndexByte(n.source[start+1:], '`')
-			if end < 0 {
-				return nil, fmt.Errorf("unterminated raw string literal")
-			}
-			value = string(n.source[start : start+end+2])
+		value, err := n.literalValue(v)
+		if err != nil {
+			return nil, err
 		}
 		return n.trees.node(role + "|BasicLit:" + v.Kind.String() + ":" + strconv.Quote(value)), nil
 	case *ast.BadExpr, *ast.BadStmt, *ast.BadDecl:
@@ -149,4 +142,18 @@ func (n *normalizer) nodeRole(node ast.Node, role string) (*tree, error) {
 		}
 	}
 	return n.trees.node(label, children...), nil
+}
+
+func (n *normalizer) literalValue(lit *ast.BasicLit) (string, error) {
+	if lit.Kind != token.STRING || len(lit.Value) == 0 || lit.Value[0] != '`' || n.file == nil {
+		return lit.Value, nil
+	}
+	// The scanner removes CR characters from raw strings, so Value
+	// and End cannot recover their exact source spelling.
+	start := n.file.Offset(lit.Pos())
+	end := bytes.IndexByte(n.source[start+1:], '`')
+	if end < 0 {
+		return "", fmt.Errorf("unterminated raw string literal")
+	}
+	return string(n.source[start : start+end+2]), nil
 }
