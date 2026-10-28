@@ -72,6 +72,8 @@ func TestNormalization(t *testing.T) {
 		{"callback", "func f(fn func()) { fn() }", "func g(cb func()) { cb() }", true},
 		{"distinct references", "func f(x,y int) int { return x+x }", "func g(a,b int) int { return a+b }", false},
 		{"identifier namespace", "func f(x int) int { return x }", "func g() int { return p0 }", false},
+		{"global variable names", "var value int; func f() { use(value) }", "var other int; func g() { use(other) }", false},
+		{"global constant names", "const value=1; func f() { use(value) }", "const other=1; func g() { use(other) }", false},
 		{"shadowing", "func f(x int) { { x := 1; use(x) }; use(x) }", "func g(a int) { { b := 1; use(b) }; use(a) }", true},
 		{"shadow reference", "func f(x int) { { x := 1; use(x) } }", "func g(a int) { { b := 1; use(a) } }", false},
 		{"short rhs", "func f(x int) { { x := x; use(x) } }", "func g(a int) { { b := a; use(b) } }", true},

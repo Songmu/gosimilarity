@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestArrayAndSliceKinds(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "types.go", "package example\ntype First [2]int\ntype Second [2]int\ntype Slice []int\n")
+	r, code, _ := runJSON(t, "types.go", "--no-functions", "-t", "0")
+	var kinds []string
+	for _, d := range r.Declarations {
+		kinds = append(kinds, d.TypeKind)
+	}
+	if code != 0 || !reflect.DeepEqual(kinds, []string{"array", "array", "slice"}) {
+		t.Fatalf("unexpected type classification: code=%d kinds=%v", code, kinds)
+	}
+	if r.Summary.TypeCandidates != 1 || len(r.Pairs) != 1 ||
+		r.Pairs[0].A != r.Declarations[0].ID || r.Pairs[0].B != r.Declarations[1].ID {
+		t.Fatalf("arrays and slices were compared together: %+v", r)
+	}
+}
+
 func TestCompareExactPruning(t *testing.T) {
 	ts := newTrees()
 	same, different := ts.node("same"), ts.node("different")

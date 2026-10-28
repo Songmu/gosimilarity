@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestMatchGlobOverlappingWildcards(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		want bool
+	}{
+		{"target.go", true},
+		{"a/b/target.go", true},
+		{"a/b/missing.go", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchGlob("**/**/target.go", tt.name); got != tt.want {
+				t.Fatalf("match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDiscoveryExplicitNonGo(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeFile(t, "notes.txt", "not Go source")

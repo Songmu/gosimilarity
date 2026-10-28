@@ -7,7 +7,6 @@ import (
 
 type binding struct {
 	kind    string
-	name    string
 	guard   *binding
 	caseNum int
 }
@@ -55,7 +54,7 @@ func (b *bindings) declare(id *ast.Ident, kind string) {
 	if id == nil || id.Name == "_" {
 		return
 	}
-	obj := &binding{kind: kind, name: id.Name}
+	obj := &binding{kind: kind}
 	b.current.names[id.Name] = obj
 	b.idents[id] = obj
 }
