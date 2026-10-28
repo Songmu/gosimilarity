@@ -85,35 +85,9 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	fs.Var(&excludes, "exclude", "exclude cwd-relative glob (repeatable; ** matches directories)")
 	fs.BoolVar(&ver, "version", false, "display version")
 	fs.BoolVar(&ver, "V", false, "alias for --version")
-	// Parse one option at a time to support interspersed paths and -- without
-	// accidentally treating a flag's value as another option.
-	var paths []string
-	for i := 0; i < len(argv); i++ {
-		arg := argv[i]
-		if arg == "--" {
-			paths = append(paths, argv[i+1:]...)
-			break
-		}
-		if arg == "-" || !strings.HasPrefix(arg, "-") {
-			paths = append(paths, arg)
-			continue
-		}
-		name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
-		name, _, equals := strings.Cut(name, "=")
-		f := fs.Lookup(name)
-		args := []string{arg}
-		if f != nil && !equals {
-			boolean, ok := f.Value.(interface{ IsBoolFlag() bool })
-			if !ok || !boolean.IsBoolFlag() {
-				if i+1 < len(argv) {
-					i++
-					args = append(args, argv[i])
-				}
-			}
-		}
-		if err := fs.Parse(args); err != nil {
-			return o, nil, false, err
-		}
+	paths, err := parseInterspersed(fs, argv)
+	if err != nil {
+		return o, nil, false, err
 	}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "min-tokens" {
@@ -147,6 +121,40 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 		paths = []string{"."}
 	}
 	return o, paths, ver, nil
+}
+
+// Parse one option at a time to support interspersed paths and -- without
+// accidentally treating a flag's value as another option.
+func parseInterspersed(fs *flag.FlagSet, argv []string) ([]string, error) {
+	var paths []string
+	for i := 0; i < len(argv); i++ {
+		arg := argv[i]
+		if arg == "--" {
+			paths = append(paths, argv[i+1:]...)
+			break
+		}
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			paths = append(paths, arg)
+			continue
+		}
+		name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+		name, _, equals := strings.Cut(name, "=")
+		f := fs.Lookup(name)
+		args := []string{arg}
+		if f != nil && !equals {
+			boolean, ok := f.Value.(interface{ IsBoolFlag() bool })
+			if !ok || !boolean.IsBoolFlag() {
+				if i+1 < len(argv) {
+					i++
+					args = append(args, argv[i])
+				}
+			}
+		}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+	}
+	return paths, nil
 }
 
 // Run finds structurally similar Go declarations and writes text or JSON.
