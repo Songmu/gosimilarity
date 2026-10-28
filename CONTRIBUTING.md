@@ -22,7 +22,7 @@ Measure coverage or run benchmarks when relevant to your change:
 ```sh
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-go test -run '^$' -bench . -benchmem
+go test -run '^$' -bench . -benchtime=1x -benchmem
 ```
 
 Keep tests focused on observable behavior and include regression coverage for
