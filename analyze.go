@@ -102,7 +102,7 @@ func analyze(ctx context.Context, paths []string, cwd string, opts options, r *r
 			r.Declarations = append(r.Declarations, d)
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
-			n := &normalizer{trees: ts, bindings: b, ids: make(map[*binding]int)}
+			n := &normalizer{trees: ts, bindings: b, ids: make(map[*binding]int), source: src, file: fset.File(file.Pos())}
 			switch v := node.(type) {
 			case *ast.FuncDecl:
 				if !opts.noFunctions && v.Body != nil {

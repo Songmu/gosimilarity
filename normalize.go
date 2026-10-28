@@ -1,6 +1,7 @@
 package gosimilarity
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -13,6 +14,8 @@ type normalizer struct {
 	bindings *bindings
 	self     *binding
 	ids      map[*binding]int
+	source   []byte
+	file     *token.File
 }
 
 func (n *normalizer) ident(id *ast.Ident) *tree {
@@ -59,6 +62,21 @@ func (n *normalizer) node(node ast.Node) (*tree, error) {
 		return n.node(v.X)
 	case *ast.Ident:
 		return n.ident(v), nil
+	case *ast.BasicLit:
+		value := v.Value
+		if v.Kind == token.STRING && len(value) > 0 && value[0] == '`' && n.file != nil {
+			// The scanner removes CR characters from raw strings, so Value
+			// and End cannot recover their exact source spelling.
+			start := n.file.Offset(v.Pos())
+			end := bytes.IndexByte(n.source[start+1:], '`')
+			if end < 0 {
+				return nil, fmt.Errorf("unterminated raw string literal")
+			}
+			value = string(n.source[start : start+end+2])
+		}
+		return n.trees.node("BasicLit",
+			n.trees.node("Kind:"+v.Kind.String()),
+			n.trees.node("Value", n.trees.node("Value:"+value))), nil
 	case *ast.BadExpr, *ast.BadStmt, *ast.BadDecl:
 		return nil, fmt.Errorf("invalid syntax node %T", node)
 	}

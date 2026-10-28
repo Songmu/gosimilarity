@@ -12,7 +12,8 @@ import (
 func normalizeSource(t *testing.T, ts *trees, src string, types bool) []*tree {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "example.go", "package example\n"+src, parser.ParseComments|parser.SkipObjectResolution)
+	source := []byte("package example\n" + src)
+	file, err := parser.ParseFile(fset, "example.go", source, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +24,7 @@ func normalizeSource(t *testing.T, ts *trees, src string, types bool) []*tree {
 	b := resolveBindings(file)
 	var result []*tree
 	ast.Inspect(file, func(node ast.Node) bool {
-		n := &normalizer{trees: ts, bindings: b, ids: make(map[*binding]int)}
+		n := &normalizer{trees: ts, bindings: b, ids: make(map[*binding]int), source: source, file: fset.File(file.Pos())}
 		var normalized *tree
 		var err error
 		switch v := node.(type) {
@@ -84,6 +85,7 @@ func TestNormalization(t *testing.T) {
 		{"known map key", "func f(x int) { use(map[int]int{x:x}) }", "func g(y int) { use(map[int]int{y:y}) }", true},
 		{"literal spelling", "func f() { use(42) }", "func g() { use(4_2) }", false},
 		{"string spelling", "func f() { use(\"a\") }", "func g() { use(`a`) }", false},
+		{"raw string carriage return", "func f() { use(`a\rb`) }", "func g() { use(`ab`) }", false},
 		{"operators", "func f(x int) { use(x+1) }", "func g(y int) { use(y-1) }", false},
 		{"assignment token", "func f() { x := 1; use(x) }", "func g() { x = 1; use(x) }", false},
 		{"statement order", "func f() { first(); second() }", "func g() { second(); first() }", false},
