@@ -52,6 +52,17 @@ func normalizeSource(t *testing.T, ts *trees, src string, types bool) []*tree {
 	return result
 }
 
+func assertNormalizedEquality(t *testing.T, aSource, bSource string, types, want bool) (*tree, *tree) {
+	t.Helper()
+	ts := newTrees()
+	a := normalizeSource(t, ts, aSource, types)[0]
+	b := normalizeSource(t, ts, bSource, types)[0]
+	if got := equalTrees(a, b); got != want {
+		t.Fatalf("equal = %v, want %v", got, want)
+	}
+	return a, b
+}
+
 func TestNormalization(t *testing.T) {
 	tests := []struct {
 		name, a, b string
@@ -97,12 +108,7 @@ func TestNormalization(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts := newTrees()
-			a := normalizeSource(t, ts, tt.a, false)[0]
-			b := normalizeSource(t, ts, tt.b, false)[0]
-			if got := equalTrees(a, b); got != tt.equal {
-				t.Fatalf("equal = %v, want %v", got, tt.equal)
-			}
+			a, b := assertNormalizedEquality(t, tt.a, tt.b, false, tt.equal)
 			if d := distance(a, b, .3); (d == 0) != tt.equal {
 				t.Fatalf("distance = %g, equality = %v", d, tt.equal)
 			}
@@ -133,12 +139,7 @@ func TestTypeNormalization(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.a+"/"+tt.b, func(t *testing.T) {
-			ts := newTrees()
-			a := normalizeSource(t, ts, tt.a, true)[0]
-			b := normalizeSource(t, ts, tt.b, true)[0]
-			if equalTrees(a, b) != tt.equal {
-				t.Fatalf("unexpected equality: want %v", tt.equal)
-			}
+			assertNormalizedEquality(t, tt.a, tt.b, true, tt.equal)
 		})
 	}
 }
