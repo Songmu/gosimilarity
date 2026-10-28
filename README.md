@@ -22,6 +22,7 @@ gosimilarity ./cmd ./internal --cross-file-only
 gosimilarity first.go second.go -t 0.9 --print
 gosimilarity . --min-tokens 30 --format json
 gosimilarity . --exclude 'internal/legacy/**' --include-tests
+gosimilarity . --types
 gosimilarity . --no-functions
 gosimilarity . --fail-on-duplicates
 ```
@@ -29,9 +30,10 @@ gosimilarity . --fail-on-duplicates
 ## Description
 
 gosimilarity parses source without building it, fetching its dependencies, or
-performing type checking. Functions and types are both compared by default,
-including across files. It scans all collected Go source regardless of build
-tags, OS, or architecture constraints.
+performing type checking. Functions and methods are compared by default,
+including across files. Use `--types` to also compare type declarations, or
+`--no-functions` to compare only types. It scans all collected Go source regardless
+of build tags, OS, or architecture constraints.
 
 Function bodies are compared as ordered syntax trees. Parameter, receiver,
 result, and local-variable names are normalized using syntactic scopes, including
@@ -70,6 +72,7 @@ Paths and options may be interspersed. No paths means `.`; `--` ends options.
 | `--min-lines`, `-m` | `3` | Minimum physical declaration lines, functions only |
 | `--min-tokens` | unset | Minimum normalized tree nodes; overrides `--min-lines` with a warning if both are given |
 | `--rename-cost`, `-r` | `0.3` | Finite, positive node replacement cost |
+| `--types` | off | Also compare type declarations |
 | `--no-functions` | off | Compare only types |
 | `--no-types` | off | Compare only functions |
 | `--exclude PATTERN` | none | Repeatable cwd-relative glob; `**` matches zero or more path components |
@@ -85,7 +88,8 @@ Paths and options may be interspersed. No paths means `.`; `--` ends options.
 
 Both function filters must hold for a pair, but different sides can satisfy
 them. Body searches exclude signatures. Filters and minimum sizes never apply to
-types. Disabling both categories is an argument error.
+types. Disabling both categories, or combining `--types` with `--no-types`, is an
+argument error.
 
 The option names and initial defaults follow
 [similarity-ts](https://github.com/mizchi/similarity), but this is an independent

@@ -17,7 +17,7 @@ func TestNonRegularGoInputs(t *testing.T) {
 	if code != 2 || r.Status != "incomplete" || r.Summary.ParsedFiles != 0 {
 		t.Fatal("explicit non-regular input did not fail before reading")
 	}
-	r, code, _ = runJSON(t, ".")
+	r, code, _ = runJSON(t, ".", "--types")
 	if code != 0 || r.Status != "complete" || len(r.Pairs) != 1 || r.Summary.SkippedReasons["non_regular"] != 1 {
 		t.Fatal("directory discovery did not skip non-regular input")
 	}

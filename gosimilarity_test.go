@@ -66,7 +66,7 @@ type Alias = string
 type Names []string
 type Shape interface { Open() error }
 `)
-	r, code, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--fail-on-duplicates")
+	r, code, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--types", "--fail-on-duplicates")
 	if code != 1 || r.Status != "complete" || len(r.Pairs) != 5 || r.Summary.Functions != 2 || r.Summary.Types != 8 {
 		t.Fatalf("unexpected result: code=%d summary=%+v", code, r.Summary)
 	}
@@ -86,26 +86,28 @@ type Shape interface { Open() error }
 			t.Fatal("unresolved pair reference or inexact match")
 		}
 	}
-	for _, args := range [][]string{
-		{"--no-functions", "--min-tokens", "9999", "--filter-function", "absent"},
-		{"--no-types"},
+	for _, tt := range []struct {
+		args             []string
+		functions, types int
+	}{
+		{nil, 2, 0},
+		{[]string{"--types"}, 2, 8},
+		{[]string{"--no-functions", "--min-tokens", "9999", "--filter-function", "absent"}, 0, 8},
+		{[]string{"--no-types"}, 2, 0},
+		{[]string{"--types=false"}, 2, 0},
 	} {
-		result, code, _ := runJSON(t, append([]string{".", "-t", "1"}, args...)...)
-		if code != 0 || len(result.Pairs) == 0 {
-			t.Fatal("category switch removed wrong pairs")
-		}
-		for _, d := range result.Declarations {
-			if (args[0] == "--no-functions") == (d.Kind == "function") {
-				t.Fatal("disabled category in output")
-			}
+		result, code, _ := runJSON(t, append([]string{".", "-t", "1"}, tt.args...)...)
+		if code != 0 || len(result.Pairs) == 0 || result.Summary.Functions != tt.functions ||
+			result.Summary.Types != tt.types || len(result.Declarations) != tt.functions+tt.types {
+			t.Fatalf("%v: unexpected categories: code=%d summary=%+v", tt.args, code, result.Summary)
 		}
 	}
-	again, _, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--fail-on-duplicates")
+	again, _, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--types", "--fail-on-duplicates")
 	if !reflect.DeepEqual(r, again) {
 		t.Fatal("output is not deterministic")
 	}
 	var text, stderr bytes.Buffer
-	if err := Run(context.Background(), []string{".", "-t", "1", "-p"}, &text, &stderr); err != nil {
+	if err := Run(context.Background(), []string{".", "-t", "1", "-p", "--types"}, &text, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Similarity: 100.00%", "[function]", "[type]", "a.go:3-5 First", "return x + 1"} {
@@ -119,11 +121,11 @@ func TestPartialFailureAndSizeOptions(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeFile(t, "ok.go", "package example\nfunc A() { work() }\nfunc B() { work() }\ntype AType int\ntype BType int\n")
 	writeFile(t, "broken.go", "package example\nfunc broken(")
-	r, code, _ := runJSON(t, ".", "--fail-on-duplicates")
+	r, code, _ := runJSON(t, ".", "--types", "--fail-on-duplicates")
 	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 || r.Summary.FilteredFunctions != 2 {
 		t.Fatalf("partial results lost: code=%d, %+v", code, r)
 	}
-	r, code, stderr := runJSON(t, "ok.go", "-m", "100", "--min-tokens", "0")
+	r, code, stderr := runJSON(t, "ok.go", "--types", "-m", "100", "--min-tokens", "0")
 	if code != 0 || len(r.Pairs) != 2 || !strings.Contains(stderr, "overrides") {
 		t.Fatal("min-tokens did not override min-lines with a warning")
 	}
@@ -131,7 +133,7 @@ func TestPartialFailureAndSizeOptions(t *testing.T) {
 	if code != 2 || r.Summary.Files != 0 {
 		t.Fatal("no categories must fail before discovery")
 	}
-	r, code, _ = runJSON(t, "missing.go", "--fail-on-duplicates", "ok.go")
+	r, code, _ = runJSON(t, "missing.go", "--types", "--fail-on-duplicates", "ok.go")
 	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 {
 		t.Fatal("missing explicit file did not override duplicate exit")
 	}
@@ -157,7 +159,7 @@ func TestCompactTypeSimilarity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			writeFile(t, "example.go", "package example\n"+tt.source)
-			r, code, _ := runJSON(t, ".", "-t", "0")
+			r, code, _ := runJSON(t, ".", "--types", "-t", "0")
 			if code != 0 || len(r.Pairs) != 1 || len(r.Declarations) != 2 {
 				t.Fatalf("unexpected report: code=%d, %+v", code, r)
 			}
@@ -169,7 +171,7 @@ func TestCompactTypeSimilarity(t *testing.T) {
 					t.Fatalf("nodes = %d, want %d", d.Nodes, tt.nodes)
 				}
 			}
-			r, code, _ = runJSON(t, ".", "-t", tt.threshold)
+			r, code, _ = runJSON(t, ".", "--types", "-t", tt.threshold)
 			if code != 0 || len(r.Pairs) != 0 {
 				t.Fatal("type difference passed the threshold")
 			}
@@ -204,6 +206,7 @@ func TestCLIOptions(t *testing.T) {
 		{"-t", "NaN"}, {"-t", "1.1"}, {"-t", "-.1"}, {"--min-tokens", "-1"},
 		{"--min-lines", "-1"}, {"--format", "yaml"}, {"--unknown"},
 		{"--exclude", "["}, {"--threshold"}, {"--no-size-penalty"},
+		{"--types", "--no-types"}, {"--no-types", "--types"},
 	} {
 		var out, stderr bytes.Buffer
 		err := Run(context.Background(), args, &out, &stderr)
@@ -226,8 +229,12 @@ func TestCLIOptions(t *testing.T) {
 	}
 	t.Chdir(t.TempDir())
 	writeFile(t, "-example.go", "package example\ntype A int\ntype B int")
-	r, code, _ := runJSON(t, "--", "-example.go")
-	if code != 0 || len(r.Pairs) != 1 {
+	r, code, _ := runJSON(t, "--fail-on-duplicates", "--", "-example.go")
+	if code != 0 || len(r.Declarations) != 0 || r.Summary.TypeCandidates != 0 || len(r.Pairs) != 0 {
+		t.Fatal("types were compared without opting in")
+	}
+	r, code, _ = runJSON(t, "--types", "--fail-on-duplicates", "--", "-example.go")
+	if code != 1 || len(r.Pairs) != 1 {
 		t.Fatal("-- did not terminate option parsing")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -255,7 +262,7 @@ func Last() {
 type A int
 type B int
 `)
-	r, code, _ := runJSON(t, ".", "--filter-function", "Target", "--filter-function-body", "needle")
+	r, code, _ := runJSON(t, ".", "--types", "--filter-function", "Target", "--filter-function-body", "needle")
 	if code != 0 || len(r.Pairs) != 2 || len(r.Groups) != 0 {
 		t.Fatal("pair-wide name/body filters or type filter independence failed")
 	}
@@ -333,7 +340,7 @@ func TestDiscovery(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			r, code, _ := runJSON(t, ".")
+			r, code, _ := runJSON(t, ".", "--types")
 			if code != 0 || r.Status != "complete" {
 				t.Fatal("discovery incomplete")
 			}
@@ -352,12 +359,12 @@ func TestDiscovery(t *testing.T) {
 					t.Fatal("tracked deletion or current working tree not respected")
 				}
 			}
-			withTests, _, _ := runJSON(t, ".", "--include-tests")
+			withTests, _, _ := runJSON(t, ".", "--types", "--include-tests")
 			if !slices.Contains(declarationFiles(withTests), "a_test.go") || slices.Contains(declarationFiles(withTests), "generated.go") {
 				t.Fatal("include-tests changed unrelated exclusions")
 			}
-			one, _, _ := runJSON(t, ".", "generated.go", "ignored.go", "a_test.go", "vendor/v.go")
-			two, _, _ := runJSON(t, "vendor/v.go", "a_test.go", "ignored.go", "generated.go", ".")
+			one, _, _ := runJSON(t, ".", "generated.go", "ignored.go", "a_test.go", "vendor/v.go", "--types")
+			two, _, _ := runJSON(t, "vendor/v.go", "a_test.go", "ignored.go", "generated.go", ".", "--types")
 			if !reflect.DeepEqual(one, two) || one.Summary.ParsedFiles != len(want)+4-boolInt(!inGit) {
 				t.Fatal("explicit inputs do not override automatic exclusions deterministically")
 			}
@@ -365,7 +372,7 @@ func TestDiscovery(t *testing.T) {
 				{".", "generated.go", "--exclude", "generated.go", "--exclude", "sub/**"},
 				{"--exclude", "sub/**", filepath.Join(dir, "generated.go"), ".", "--exclude", "generated.go"},
 			} {
-				excluded, code, _ := runJSON(t, args...)
+				excluded, code, _ := runJSON(t, append(args, "--types")...)
 				if code != 0 || slices.Contains(declarationFiles(excluded), "generated.go") || slices.Contains(declarationFiles(excluded), "sub/b.go") {
 					t.Fatal("explicit exclude precedence failed")
 				}
@@ -394,7 +401,7 @@ func TestSymlinkIdentity(t *testing.T) {
 			t.Skip("symlinks unavailable:", err)
 		}
 	}
-	r, code, _ := runJSON(t, "real", "link", "real/a.go", "real/link.go")
+	r, code, _ := runJSON(t, "real", "link", "real/a.go", "real/link.go", "--types")
 	if code != 0 || r.Summary.ParsedFiles != 1 || len(r.Declarations) != 1 {
 		t.Fatal("explicit symlinks did not deduplicate or nested link was followed")
 	}
@@ -463,7 +470,7 @@ func TestReadFailure(t *testing.T) {
 		file.Close()
 		t.Skip("environment can read files without permission")
 	}
-	r, code, _ := runJSON(t, "good.go", "unreadable.go", "--fail-on-duplicates")
+	r, code, _ := runJSON(t, "good.go", "unreadable.go", "--types", "--fail-on-duplicates")
 	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 || r.Summary.ParsedFiles != 1 {
 		t.Fatal("read failure lost partial results or error priority")
 	}
@@ -472,7 +479,7 @@ func TestReadFailure(t *testing.T) {
 func TestEmptyReceiver(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeFile(t, "example.go", "package example\nfunc () F() { work() }\ntype A int\ntype B int")
-	r, code, _ := runJSON(t, ".")
+	r, code, _ := runJSON(t, ".", "--types")
 	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 || r.Summary.Types != 2 || r.Summary.Functions != 0 {
 		t.Fatal("malformed receiver did not preserve other results")
 	}
@@ -491,7 +498,7 @@ func TestSymlinkParentTraversal(t *testing.T) {
 	}
 	// Do not use filepath.Join: it would clean .. before the filesystem lookup.
 	for _, name := range []string{"work/link/../a.go", filepath.ToSlash(dir) + "/work/link/../a.go"} {
-		r, code, _ := runJSON(t, name)
+		r, code, _ := runJSON(t, name, "--types")
 		if code != 0 || len(r.Declarations) != 1 || r.Declarations[0].Name != "Correct" {
 			t.Fatal("symlink traversal inspected the wrong file")
 		}
@@ -521,7 +528,7 @@ func TestExcludeCwd(t *testing.T) {
 			t.Fatal("excluding cwd did not exclude its descendants")
 		}
 	}
-	r, code, _ := runJSON(t, "../outside.go", "--exclude", ".")
+	r, code, _ := runJSON(t, "../outside.go", "--types", "--exclude", ".")
 	if code != 0 || len(r.Declarations) != 1 {
 		t.Fatal("cwd was treated as an ancestor of an outside file")
 	}
@@ -572,7 +579,7 @@ func TestOutputStreams(t *testing.T) {
 	writeFile(t, "ignored_test.go", "package example\ntype Ignored int")
 	for _, format := range []string{"text", "json"} {
 		var out, stderr bytes.Buffer
-		err := Run(context.Background(), []string{".", "--format", format, "-m", "3", "--min-tokens", "0"}, &out, &stderr)
+		err := Run(context.Background(), []string{".", "--types", "--format", format, "-m", "3", "--min-tokens", "0"}, &out, &stderr)
 		if err != nil {
 			t.Fatal(err)
 		}
