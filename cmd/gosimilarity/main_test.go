@@ -55,8 +55,16 @@ func TestCLI(t *testing.T) {
 				}
 				code = exit.ExitCode()
 			}
-			if code != tt.code || !strings.Contains(out.String(), tt.out) || !strings.Contains(stderr.String(), tt.stderr) {
-				t.Fatalf("exit=%d, stdout=%q, stderr=%q; want exit=%d, stdout containing %q, stderr containing %q",
+			stdoutMatches := out.Len() == 0
+			if tt.out != "" {
+				stdoutMatches = strings.Contains(out.String(), tt.out)
+			}
+			stderrMatches := stderr.Len() == 0
+			if tt.stderr != "" {
+				stderrMatches = strings.Contains(stderr.String(), tt.stderr)
+			}
+			if code != tt.code || !stdoutMatches || !stderrMatches {
+				t.Fatalf("exit=%d, stdout=%q, stderr=%q; want exit=%d, stdout matching %q, stderr matching %q",
 					code, &out, &stderr, tt.code, tt.out, tt.stderr)
 			}
 		})
