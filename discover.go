@@ -176,46 +176,22 @@ func discover(ctx context.Context, paths []string, cwd string, opts options, res
 			add(name, true)
 			continue
 		}
+		var candidates []string
 		if root := gitRoot(name); root != "" {
-			cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go")
-			// A corrupt repository or missing Git must not silently change discovery.
-			data, err := cmd.Output()
+			candidates, err = collectGitFiles(ctx, root, name)
 			if err != nil {
+				// A corrupt repository or missing Git must not silently change discovery.
 				result.diagnose("error", "git", displayPath(cwd, name), "", fmt.Sprintf("git ls-files failed: %v", err))
 				continue
 			}
-			for _, entry := range strings.Split(string(data), "\x00") {
-				if entry == "" {
-					continue
-				}
-				full := filepath.Join(root, filepath.FromSlash(entry))
-				rel, err := filepath.Rel(name, full)
-				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-					continue
-				}
-				add(full, false)
-			}
 		} else {
-			err := filepath.WalkDir(name, func(full string, entry fs.DirEntry, err error) error {
-				if err != nil {
-					result.diagnose("error", "discovery", displayPath(cwd, full), "", err.Error())
-					return nil
-				}
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				if entry.IsDir() {
-					if entry.Name() == ".git" || entry.Name() == "vendor" || excluded(displayPath(cwd, full), opts.excludes) {
-						return filepath.SkipDir
-					}
-				} else if filepath.Ext(full) == ".go" {
-					add(full, false)
-				}
-				return nil
-			})
+			candidates, err = collectWalkFiles(ctx, name, cwd, opts.excludes, result)
 			if err != nil {
 				result.diagnose("error", "discovery", displayPath(cwd, name), "", err.Error())
 			}
+		}
+		for _, full := range candidates {
+			add(full, false)
 		}
 	}
 	names := make([]string, 0, len(files))
@@ -231,43 +207,84 @@ func discover(ctx context.Context, paths []string, cwd string, opts options, res
 			result.skip("excluded", shown, "matched --exclude")
 			continue
 		}
-		if !direct {
-			if automaticExclusion(name, opts.includeTests) {
-				result.skip("automatic", shown, "automatically excluded path")
-				continue
-			}
-			// Check every component, since a tracked path may traverse a symlink.
-			link := false
-			for p := name; ; p = filepath.Dir(p) {
-				info, err := os.Lstat(p)
-				if err != nil {
-					if errors.Is(err, fs.ErrNotExist) {
-						result.skip("missing", shown, "listed file is absent from the working tree")
-					} else {
-						result.diagnose("error", "read", shown, "", err.Error())
-					}
-					link = true
-					break
-				}
-				if info.Mode()&os.ModeSymlink != 0 {
-					result.skip("symlink", shown, "automatically discovered symlink")
-					link = true
-					break
-				}
-				if p == name && !info.Mode().IsRegular() {
-					result.skip("non_regular", shown, "not a regular Go file")
-					link = true
-					break
-				}
-				if filepath.Dir(p) == p {
-					break
-				}
-			}
-			if link {
-				continue
-			}
+		if !direct && !validDiscoveredFile(name, shown, opts.includeTests, result) {
+			continue
 		}
 		inputs = append(inputs, inputFile{path: name, direct: direct})
 	}
 	return inputs
+}
+
+func collectGitFiles(ctx context.Context, root, dir string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go")
+	data, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, entry := range strings.Split(string(data), "\x00") {
+		if entry == "" {
+			continue
+		}
+		full := filepath.Join(root, filepath.FromSlash(entry))
+		rel, err := filepath.Rel(dir, full)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		files = append(files, full)
+	}
+	return files, nil
+}
+
+func collectWalkFiles(ctx context.Context, dir, cwd string, excludes []string, result *report) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(dir, func(full string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			result.diagnose("error", "discovery", displayPath(cwd, full), "", err.Error())
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".git" || entry.Name() == "vendor" || excluded(displayPath(cwd, full), excludes) {
+				return filepath.SkipDir
+			}
+		} else if filepath.Ext(full) == ".go" {
+			files = append(files, full)
+		}
+		return nil
+	})
+	return files, err
+}
+
+func validDiscoveredFile(name, shown string, includeTests bool, result *report) bool {
+	if automaticExclusion(name, includeTests) {
+		result.skip("automatic", shown, "automatically excluded path")
+		return false
+	}
+	// Check every component, since a tracked path may traverse a symlink.
+	for p := name; ; p = filepath.Dir(p) {
+		info, err := os.Lstat(p)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				result.skip("missing", shown, "listed file is absent from the working tree")
+			} else {
+				result.diagnose("error", "read", shown, "", err.Error())
+			}
+			return false
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			result.skip("symlink", shown, "automatically discovered symlink")
+			return false
+		}
+		if p == name && !info.Mode().IsRegular() {
+			result.skip("non_regular", shown, "not a regular Go file")
+			return false
+		}
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	return true
 }
