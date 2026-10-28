@@ -56,6 +56,7 @@ func (p *patterns) Set(v string) error {
 func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, error) {
 	var o options
 	var ver bool
+	var compareTypes bool
 	var excludes patterns
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(errStream)
@@ -70,7 +71,8 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	fs.IntVar(&o.minLines, "min-lines", 3, "minimum function declaration lines")
 	fs.IntVar(&o.minLines, "m", 3, "alias for --min-lines")
 	fs.IntVar(&o.minTokens, "min-tokens", 0, "minimum normalized function tree nodes (overrides --min-lines)")
-	fs.BoolVar(&o.noFunctions, "no-functions", false, "disable function comparisons")
+	fs.BoolVar(&compareTypes, "types", false, "include type comparisons")
+	fs.BoolVar(&o.noFunctions, "no-functions", false, "compare only types")
 	fs.BoolVar(&o.noTypes, "no-types", false, "disable type comparisons")
 	fs.BoolVar(&o.print, "print", false, "include original declarations")
 	fs.BoolVar(&o.print, "p", false, "alias for --print")
@@ -133,6 +135,10 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	if o.noFunctions && o.noTypes {
 		return o, nil, false, errors.New("--no-functions and --no-types cannot both be set")
 	}
+	if compareTypes && o.noTypes {
+		return o, nil, false, errors.New("--types and --no-types cannot both be set")
+	}
+	o.noTypes = !compareTypes && !o.noFunctions
 	if o.format != "json" && o.format != "text" {
 		return o, nil, false, errors.New("--format must be text or json")
 	}
