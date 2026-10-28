@@ -195,6 +195,41 @@ func percent(score float64) float64 {
 	return math.Min(99.99, score*100)
 }
 
+func renderTextDeclaration(w io.Writer, d declaration) error {
+	name := d.Name
+	if d.Receiver != "" {
+		name = "(" + d.Receiver + ")." + name
+	}
+	_, err := fmt.Fprintf(w, "  %s:%d-%d %s\n", d.File, d.Start.Line, d.End.Line, name)
+	return err
+}
+
+func renderTextPair(w io.Writer, decls map[string]declaration, p pair) error {
+	a, b := decls[p.A], decls[p.B]
+	if _, err := fmt.Fprintf(w, "Similarity: %.2f%%, Score: %.1f points [%s]\n", percent(p.Similarity), p.Score, a.Kind); err != nil {
+		return err
+	}
+	if err := renderTextDeclaration(w, a); err != nil {
+		return err
+	}
+	if err := renderTextDeclaration(w, b); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  nodes: %d / %d\n", a.Nodes, b.Nodes)
+	return err
+}
+
+func renderTextSources(w io.Writer, decls map[string]declaration, ids []string) error {
+	for _, id := range ids {
+		if d := decls[id]; d.Source != "" {
+			if _, err := fmt.Fprintf(w, "\n%s\n", d.Source); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func renderText(w io.Writer, r *report) error {
 	decls := make(map[string]declaration, len(r.Declarations))
 	for _, d := range r.Declarations {
@@ -206,36 +241,13 @@ func renderText(w io.Writer, r *report) error {
 			byPair[id] = g
 		}
 	}
-	printDecl := func(d declaration) error {
-		name := d.Name
-		if d.Receiver != "" {
-			name = "(" + d.Receiver + ")." + name
-		}
-		_, err := fmt.Fprintf(w, "  %s:%d-%d %s\n", d.File, d.Start.Line, d.End.Line, name)
-		return err
-	}
-	printPair := func(p pair) error {
-		a, b := decls[p.A], decls[p.B]
-		if _, err := fmt.Fprintf(w, "Similarity: %.2f%%, Score: %.1f points [%s]\n", percent(p.Similarity), p.Score, a.Kind); err != nil {
-			return err
-		}
-		if err := printDecl(a); err != nil {
-			return err
-		}
-		if err := printDecl(b); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "  nodes: %d / %d\n", a.Nodes, b.Nodes); err != nil {
-			return err
-		}
-		return nil
-	}
 	pairs := make(map[string]pair, len(r.Pairs))
 	for _, p := range r.Pairs {
 		pairs[p.ID] = p
 	}
 	printed := make(map[string]bool)
 	for _, p := range r.Pairs {
+		sources := []string{p.A, p.B}
 		if g, ok := byPair[p.ID]; ok {
 			if printed[g.ID] {
 				continue
@@ -245,28 +257,18 @@ func renderText(w io.Writer, r *report) error {
 				return err
 			}
 			for _, id := range g.Pairs {
-				if err := printPair(pairs[id]); err != nil {
+				if err := renderTextPair(w, decls, pairs[id]); err != nil {
 					return err
 				}
 			}
-			for _, id := range g.Members {
-				if d := decls[id]; d.Source != "" {
-					if _, err := fmt.Fprintf(w, "\n%s\n", d.Source); err != nil {
-						return err
-					}
-				}
-			}
+			sources = g.Members
 		} else {
-			if err := printPair(p); err != nil {
+			if err := renderTextPair(w, decls, p); err != nil {
 				return err
 			}
-			for _, id := range []string{p.A, p.B} {
-				if d := decls[id]; d.Source != "" {
-					if _, err := fmt.Fprintf(w, "\n%s\n", d.Source); err != nil {
-						return err
-					}
-				}
-			}
+		}
+		if err := renderTextSources(w, decls, sources); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
 			return err
