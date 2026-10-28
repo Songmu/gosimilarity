@@ -19,27 +19,36 @@ type inputFile struct {
 }
 
 func canonicalPath(name string) (string, error) {
-	abs, err := filepath.Abs(name)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	// EvalSymlinks must see .. before Abs or Clean can collapse it.
+	resolved, err := filepath.EvalSymlinks(name)
 	if err == nil {
-		return filepath.Clean(resolved), nil
+		abs, err := filepath.Abs(resolved)
+		if err != nil {
+			return "", err
+		}
+		// A relative result may still inherit symlinks from the cwd.
+		return filepath.EvalSymlinks(abs)
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
 	// Resolve existing parents even for missing explicitly named files.
-	parent := filepath.Dir(abs)
-	if parent == abs {
-		return abs, nil
+	for len(name) > 0 && os.IsPathSeparator(name[len(name)-1]) {
+		name = name[:len(name)-1]
+	}
+	parent, base := filepath.Split(name)
+	if base == "" || base == "." || base == ".." {
+		// In particular, do not collapse missing/.. into an existing parent.
+		return "", err
+	}
+	if parent == "" {
+		parent = "."
 	}
 	p, err := canonicalPath(parent)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(p, filepath.Base(abs)), nil
+	return filepath.Join(p, base), nil
 }
 
 func displayPath(cwd, name string) string {
@@ -88,6 +97,9 @@ func excluded(name string, patterns []string) bool {
 			if matchGlob(pattern, p) {
 				return true
 			}
+		}
+		if name != ".." && !strings.HasPrefix(name, "../") && !filepath.IsAbs(filepath.FromSlash(name)) && matchGlob(pattern, ".") {
+			return true
 		}
 	}
 	return false

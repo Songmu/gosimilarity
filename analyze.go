@@ -55,6 +55,10 @@ func analyze(ctx context.Context, paths []string, cwd string, opts options, r *r
 			var err error
 			switch v := node.(type) {
 			case *ast.FuncDecl:
+				if v.Recv != nil && len(v.Recv.List) == 0 {
+					err = fmt.Errorf("method receiver list is empty")
+					break
+				}
 				normalized, err = n.node(v.Body)
 				d.body = text(v.Body)
 				d.Signature = strings.TrimSpace(string(src[loc(v.Pos()).Offset:loc(v.Body.Pos()).Offset]))

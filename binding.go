@@ -6,8 +6,10 @@ import (
 )
 
 type binding struct {
-	kind string
-	name string
+	kind    string
+	name    string
+	guard   *binding
+	caseNum int
 }
 
 type scope struct {
@@ -258,7 +260,11 @@ func (b *bindings) walk(node ast.Node) {
 		} else {
 			b.walk(n.Assign)
 		}
-		for _, stmt := range n.Body.List {
+		guardBinding := &binding{kind: "type-switch-guard"}
+		if guard != nil {
+			b.idents[guard] = guardBinding
+		}
+		for caseNum, stmt := range n.Body.List {
 			c := stmt.(*ast.CaseClause)
 			for _, typ := range c.List {
 				b.walk(typ)
@@ -266,16 +272,14 @@ func (b *bindings) walk(node ast.Node) {
 			b.push()
 			// The guard's spelling is a declaration, but each case has its own binding.
 			if guard != nil {
-				b.declare(guard, "variable")
+				b.current.names[guard.Name] = &binding{
+					kind: "type-switch-case", guard: guardBinding, caseNum: caseNum,
+				}
 			}
 			for _, s := range c.Body {
 				b.walk(s)
 			}
 			b.pop()
-		}
-		// A single guard node cannot represent multiple case bindings.
-		if guard != nil {
-			b.idents[guard] = &binding{kind: "type-switch-guard"}
 		}
 		b.pop()
 	case *ast.CaseClause:
@@ -306,11 +310,15 @@ func (b *bindings) walk(node ast.Node) {
 		}
 	case *ast.CompositeLit:
 		b.walk(n.Type)
-		_, isMap := unparen(n.Type).(*ast.MapType)
+		expressionKeys := false
+		switch unparen(n.Type).(type) {
+		case *ast.MapType, *ast.ArrayType:
+			expressionKeys = true
+		}
 		for _, e := range n.Elts {
 			if kv, ok := e.(*ast.KeyValueExpr); ok {
-				_, bareKey := kv.Key.(*ast.Ident)
-				if !bareKey || isMap {
+				_, bareKey := unparen(kv.Key).(*ast.Ident)
+				if !bareKey || expressionKeys {
 					b.walk(kv.Key)
 				}
 				b.walk(kv.Value)

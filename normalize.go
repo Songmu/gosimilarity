@@ -18,20 +18,28 @@ type normalizer struct {
 func (n *normalizer) ident(id *ast.Ident) *tree {
 	obj := n.bindings.idents[id]
 	if obj != nil && obj.kind == "type-switch-guard" {
-		return n.trees.node("TypeSwitchGuard")
+		return n.trees.node("TypeSwitchGuard:" + strconv.Itoa(n.bindingID(obj)))
+	}
+	if obj != nil && obj.kind == "type-switch-case" {
+		return n.trees.node("TypeSwitchCase:" + strconv.Itoa(n.bindingID(obj.guard)) + ":" + strconv.Itoa(obj.caseNum))
 	}
 	if obj != nil && obj == n.self {
 		return n.trees.node("SelfType")
 	}
 	if obj != nil && (obj.kind == "variable" || obj.kind == "type-param") {
-		i, ok := n.ids[obj]
-		if !ok {
-			i = len(n.ids)
-			n.ids[obj] = i
-		}
+		i := n.bindingID(obj)
 		return n.trees.node("BoundIdent:" + obj.kind + ":" + strconv.Itoa(i))
 	}
 	return n.trees.node("Ident:" + id.Name)
+}
+
+func (n *normalizer) bindingID(obj *binding) int {
+	i, ok := n.ids[obj]
+	if !ok {
+		i = len(n.ids)
+		n.ids[obj] = i
+	}
+	return i
 }
 
 var (

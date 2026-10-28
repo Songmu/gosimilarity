@@ -406,3 +406,61 @@ func TestReadFailure(t *testing.T) {
 		t.Fatal("read failure lost partial results or error priority")
 	}
 }
+
+func TestEmptyReceiver(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "example.go", "package example\nfunc () F() { work() }\ntype A int\ntype B int")
+	r, code, _ := runJSON(t, ".")
+	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 || r.Summary.Types != 2 || r.Summary.Functions != 0 {
+		t.Fatal("malformed receiver did not preserve other results")
+	}
+}
+
+func TestSymlinkParentTraversal(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, "work/a.go", "package example\ntype Wrong int")
+	writeFile(t, "other/a.go", "package example\ntype Correct int")
+	if err := os.Mkdir("other/sub", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../other/sub", "work/link"); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	// Do not use filepath.Join: it would clean .. before the filesystem lookup.
+	for _, name := range []string{"work/link/../a.go", filepath.ToSlash(dir) + "/work/link/../a.go"} {
+		r, code, _ := runJSON(t, name)
+		if code != 0 || len(r.Declarations) != 1 || r.Declarations[0].Name != "Correct" {
+			t.Fatal("symlink traversal inspected the wrong file")
+		}
+		_, code, _ = runJSON(t, strings.Replace(name, "a.go", "missing.go", 1), "--exclude", "other/missing.go")
+		if code != 0 {
+			t.Fatal("missing symlink target used the wrong exclusion path")
+		}
+	}
+	_, code, _ := runJSON(t, "work/missing/../a.go")
+	if code != 2 {
+		t.Fatal("missing intermediate component inspected an existing file")
+	}
+}
+
+func TestExcludeCwd(t *testing.T) {
+	root := t.TempDir()
+	if excluded(filepath.ToSlash(root), []string{"."}) {
+		t.Fatal("absolute fallback path was treated as inside cwd")
+	}
+	t.Chdir(root)
+	writeFile(t, "inside/a.go", "package example\ntype A int")
+	writeFile(t, "outside.go", "package example\ntype B int")
+	t.Chdir(filepath.Join(root, "inside"))
+	for _, paths := range [][]string{{"a.go"}, {"."}} {
+		r, code, _ := runJSON(t, append(paths, "--exclude", ".")...)
+		if code != 0 || r.Summary.Files != 0 {
+			t.Fatal("excluding cwd did not exclude its descendants")
+		}
+	}
+	r, code, _ := runJSON(t, "../outside.go", "--exclude", ".")
+	if code != 0 || len(r.Declarations) != 1 {
+		t.Fatal("cwd was treated as an ancestor of an outside file")
+	}
+}
