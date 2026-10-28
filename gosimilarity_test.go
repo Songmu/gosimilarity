@@ -468,13 +468,15 @@ func TestExcludeCwd(t *testing.T) {
 func TestDanglingSymlinkExclusion(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.MkdirAll("real/sub", 0o755); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"real/sub", "real/missing"} {
+		if err := os.MkdirAll(name, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, link := range [][2]string{
 		{"real/sub", "link"},
 		{"link/../missing.go", "alias.go"},
-		{filepath.ToSlash(dir) + "/link/../missing.go", "absolute.go"},
+		{filepath.Join(dir, "real", "missing.go"), "absolute.go"},
 		{"alias.go", "chain.go"},
 		{"real/missing", "directory"},
 	} {
@@ -482,15 +484,18 @@ func TestDanglingSymlinkExclusion(t *testing.T) {
 			t.Skip("symlinks unavailable:", err)
 		}
 	}
+	if err := os.Remove("real/missing"); err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct{ input, pattern string }{
 		{"alias.go", "real/missing.go"},
 		{"absolute.go", "real/missing.go"},
 		{"chain.go", "real/missing.go"},
 		{"directory/child.go", "real/missing/**"},
 	} {
-		r, code, _ := runJSON(t, tt.input, "--exclude", tt.pattern)
+		r, code, stderr := runJSON(t, tt.input, "--exclude", tt.pattern)
 		if code != 0 || r.Summary.Files != 0 {
-			t.Fatalf("%s: excluded dangling target caused a discovery error", tt.input)
+			t.Fatalf("%s: excluded dangling target caused a discovery error: %s", tt.input, stderr)
 		}
 	}
 	_, code, _ := runJSON(t, "alias.go")
