@@ -464,3 +464,37 @@ func TestExcludeCwd(t *testing.T) {
 		t.Fatal("cwd was treated as an ancestor of an outside file")
 	}
 }
+
+func TestDanglingSymlinkExclusion(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.MkdirAll("real/sub", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range [][2]string{
+		{"real/sub", "link"},
+		{"link/../missing.go", "alias.go"},
+		{filepath.ToSlash(dir) + "/link/../missing.go", "absolute.go"},
+		{"alias.go", "chain.go"},
+		{"real/missing", "directory"},
+	} {
+		if err := os.Symlink(link[0], link[1]); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+	}
+	for _, tt := range []struct{ input, pattern string }{
+		{"alias.go", "real/missing.go"},
+		{"absolute.go", "real/missing.go"},
+		{"chain.go", "real/missing.go"},
+		{"directory/child.go", "real/missing/**"},
+	} {
+		r, code, _ := runJSON(t, tt.input, "--exclude", tt.pattern)
+		if code != 0 || r.Summary.Files != 0 {
+			t.Fatalf("%s: excluded dangling target caused a discovery error", tt.input)
+		}
+	}
+	_, code, _ := runJSON(t, "alias.go")
+	if code != 2 {
+		t.Fatal("unexcluded dangling symlink did not report a missing file")
+	}
+}

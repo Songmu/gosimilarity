@@ -37,6 +37,17 @@ func canonicalPath(name string) (string, error) {
 		name = name[:len(name)-1]
 	}
 	parent, base := filepath.Split(name)
+	if info, e := os.Lstat(name); e == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, e := os.Readlink(name)
+		if e != nil {
+			return "", e
+		}
+		if !filepath.IsAbs(target) {
+			// Joining here would prematurely clean symlink/.. in the target.
+			target = parent + target
+		}
+		return canonicalPath(target)
+	}
 	if base == "" || base == "." || base == ".." {
 		// In particular, do not collapse missing/.. into an existing parent.
 		return "", err
