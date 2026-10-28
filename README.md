@@ -20,6 +20,12 @@ and agents.
 
 ## Installation
 
+Install with Homebrew on macOS or Linux:
+
+```sh
+brew install Songmu/tap/gosimilarity
+```
+
 Install with Go using the version required by [go.mod](go.mod) or later:
 
 ```sh
