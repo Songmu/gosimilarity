@@ -74,14 +74,12 @@ func matchGlob(pattern, name string) bool {
 	p, s := strings.Split(pattern, "/"), strings.Split(name, "/")
 	type index struct{ p, s int }
 	memo := make(map[index]bool)
-	seen := make(map[index]bool)
 	var match func(int, int) bool
 	match = func(i, j int) bool {
 		key := index{i, j}
-		if seen[key] {
-			return memo[key]
+		if result, ok := memo[key]; ok {
+			return result
 		}
-		seen[key] = true
 		result := false
 		switch {
 		case i == len(p):
