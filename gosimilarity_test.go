@@ -66,55 +66,67 @@ type Alias = string
 type Names []string
 type Shape interface { Open() error }
 `)
-	r, code, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--types", "--fail-on-duplicates")
-	if code != 1 || r.Status != "complete" || len(r.Pairs) != 5 || r.Summary.Functions != 2 || r.Summary.Types != 8 {
-		t.Fatalf("unexpected result: code=%d summary=%+v", code, r.Summary)
-	}
-	if r.Declarations[0].Start.Line != 3 || r.Declarations[0].End.Line != 5 || r.Declarations[0].File != "a.go" {
-		t.Fatal("locations are not physical source positions")
-	}
-	decls, pairs := make(map[string]bool), make(map[string]bool)
-	for _, d := range r.Declarations {
-		decls[d.ID] = true
-		if d.Source == "" || d.Nodes == 0 {
-			t.Fatal("missing source or node count")
+	args := []string{"a.go", "-t", "1", "b.go", "-p", "--types", "--fail-on-duplicates"}
+	t.Run("basic report", func(t *testing.T) {
+		r, code, _ := runJSON(t, args...)
+		if code != 1 || r.Status != "complete" || len(r.Pairs) != 5 || r.Summary.Functions != 2 || r.Summary.Types != 8 {
+			t.Fatalf("unexpected result: code=%d summary=%+v", code, r.Summary)
 		}
-	}
-	for _, p := range r.Pairs {
-		pairs[p.ID] = true
-		if !decls[p.A] || !decls[p.B] || p.Similarity != 1 {
-			t.Fatal("unresolved pair reference or inexact match")
+		if r.Declarations[0].Start.Line != 3 || r.Declarations[0].End.Line != 5 || r.Declarations[0].File != "a.go" {
+			t.Fatal("locations are not physical source positions")
 		}
-	}
-	for _, tt := range []struct {
-		args             []string
-		functions, types int
-	}{
-		{nil, 2, 0},
-		{[]string{"--types"}, 2, 8},
-		{[]string{"--no-functions", "--min-tokens", "9999", "--filter-function", "absent"}, 0, 8},
-		{[]string{"--no-types"}, 2, 0},
-		{[]string{"--types=false"}, 2, 0},
-	} {
-		result, code, _ := runJSON(t, append([]string{".", "-t", "1"}, tt.args...)...)
-		if code != 0 || len(result.Pairs) == 0 || result.Summary.Functions != tt.functions ||
-			result.Summary.Types != tt.types || len(result.Declarations) != tt.functions+tt.types {
-			t.Fatalf("%v: unexpected categories: code=%d summary=%+v", tt.args, code, result.Summary)
+		decls := make(map[string]bool)
+		for _, d := range r.Declarations {
+			decls[d.ID] = true
+			if d.Source == "" || d.Nodes == 0 {
+				t.Fatal("missing source or node count")
+			}
 		}
-	}
-	again, _, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--types", "--fail-on-duplicates")
-	if !reflect.DeepEqual(r, again) {
-		t.Fatal("output is not deterministic")
-	}
-	var text, stderr bytes.Buffer
-	if err := Run(context.Background(), []string{".", "-t", "1", "-p", "--types"}, &text, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"Similarity: 100.00%", "[function]", "[type]", "a.go:3-5 First", "return x + 1"} {
-		if !strings.Contains(text.String(), want) {
-			t.Errorf("text missing %q", want)
+		for _, p := range r.Pairs {
+			if !decls[p.A] || !decls[p.B] || p.Similarity != 1 {
+				t.Fatal("unresolved pair reference or inexact match")
+			}
 		}
-	}
+	})
+	t.Run("category selection", func(t *testing.T) {
+		for _, tt := range []struct {
+			name             string
+			args             []string
+			functions, types int
+		}{
+			{"default", nil, 2, 0},
+			{"types enabled", []string{"--types"}, 2, 8},
+			{"types ignore function filters", []string{"--no-functions", "--min-tokens", "9999", "--filter-function", "absent"}, 0, 8},
+			{"types disabled", []string{"--no-types"}, 2, 0},
+			{"types false", []string{"--types=false"}, 2, 0},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				result, code, _ := runJSON(t, append([]string{".", "-t", "1"}, tt.args...)...)
+				if code != 0 || len(result.Pairs) == 0 || result.Summary.Functions != tt.functions ||
+					result.Summary.Types != tt.types || len(result.Declarations) != tt.functions+tt.types {
+					t.Fatalf("%v: unexpected categories: code=%d summary=%+v", tt.args, code, result.Summary)
+				}
+			})
+		}
+	})
+	t.Run("determinism", func(t *testing.T) {
+		first, firstCode, firstStderr := runJSON(t, args...)
+		again, code, stderr := runJSON(t, args...)
+		if !reflect.DeepEqual(first, again) || firstCode != code || firstStderr != stderr {
+			t.Fatal("output is not deterministic")
+		}
+	})
+	t.Run("text rendering", func(t *testing.T) {
+		var text, stderr bytes.Buffer
+		if err := Run(context.Background(), []string{".", "-t", "1", "-p", "--types"}, &text, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"Similarity: 100.00%", "[function]", "[type]", "a.go:3-5 First", "return x + 1"} {
+			if !strings.Contains(text.String(), want) {
+				t.Errorf("text missing %q", want)
+			}
+		}
+	})
 }
 
 func TestPartialFailureAndSizeOptions(t *testing.T) {
@@ -316,22 +328,26 @@ func declarationFiles(r *report) []string {
 	return names
 }
 
+func setupDiscovery(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, name := range []string{"a.go", "sub/b.go", "vendor/v.go", "a_test.go", "ignored.go"} {
+		writeFile(t, name, "package example\ntype "+strings.ReplaceAll(filepath.Base(name), ".", "_")+" int\n")
+	}
+	writeFile(t, "generated.go", "// Code generated by example. DO NOT EDIT.\npackage example\ntype Generated int\n")
+	writeFile(t, ".gitignore", "ignored.go\ntracked.go\n")
+	return dir
+}
+
 func TestDiscovery(t *testing.T) {
 	for _, inGit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "walk", true: "git"}[inGit], func(t *testing.T) {
-			dir := t.TempDir()
-			t.Chdir(dir)
-			t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			dir := setupDiscovery(t)
 			if inGit {
 				git(t, "init", "-q")
-			}
-			for _, name := range []string{"a.go", "sub/b.go", "vendor/v.go", "a_test.go", "ignored.go", "generated.go"} {
-				writeFile(t, name, "package example\ntype "+strings.ReplaceAll(filepath.Base(name), ".", "_")+" int\n")
-			}
-			writeFile(t, "generated.go", "// Code generated by example. DO NOT EDIT.\npackage example\ntype Generated int\n")
-			writeFile(t, ".gitignore", "ignored.go\ntracked.go\n")
-			if inGit {
 				writeFile(t, "tracked.go", "package example\ntype Old int")
 				writeFile(t, "deleted.go", "package example\ntype Deleted int")
 				git(t, "add", "-f", "tracked.go", "deleted.go")
