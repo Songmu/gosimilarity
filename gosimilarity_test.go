@@ -503,3 +503,39 @@ func TestDanglingSymlinkExclusion(t *testing.T) {
 		t.Fatal("unexcluded dangling symlink did not report a missing file")
 	}
 }
+
+func TestOutputStreams(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "good.go", "package example\ntype A int\ntype B int")
+	writeFile(t, "ignored_test.go", "package example\ntype Ignored int")
+	for _, format := range []string{"text", "json"} {
+		var out, stderr bytes.Buffer
+		err := Run(context.Background(), []string{".", "--format", format, "-m", "3", "--min-tokens", "0"}, &out, &stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(stderr.String(), "level=WARN ") || strings.Count(stderr.String(), "\n") != 1 {
+			t.Fatalf("%s: expected only a warning on stderr, got %q", format, stderr.String())
+		}
+		if format == "text" {
+			if !strings.Contains(out.String(), "Similarity:") || strings.Contains(out.String(), "level=") {
+				t.Fatal("text report and logs were not separated")
+			}
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(out.Bytes(), &fields); err != nil {
+			t.Fatal("logs contaminated JSON stdout:", err)
+		}
+		if _, ok := fields["schema_version"]; ok {
+			t.Fatal("unexpected schema_version in JSON report")
+		}
+		var r report
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Summary.SkippedReasons["automatic"] != 1 || len(r.Diagnostics) != 2 {
+			t.Fatal("quiet skip diagnostics were lost from the structured report")
+		}
+	}
+}

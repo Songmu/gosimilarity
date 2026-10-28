@@ -75,7 +75,7 @@ Paths and options may be interspersed. No paths means `.`; `--` ends options.
 | `--filter-function TEXT` | none | Keep function pairs where either name contains TEXT |
 | `--filter-function-body TEXT` | none | Keep function pairs where either original body contains TEXT |
 | `--print`, `-p` | off | Include both declarations' original source |
-| `--format text\|json` | `text` | Human-readable or schema-v1 structured output |
+| `--format text\|json` | `text` | Human-readable or structured output |
 | `--cross-file-only` | off | Exclude pairs from the same real file |
 | `--include-tests` | off | Include automatically discovered `*_test.go` |
 | `--fail-on-duplicates` | off | Exit 1 for matches after a complete inspection |
@@ -106,6 +106,8 @@ used without Git ignore rules.
 Automatic discovery skips `.git`, `vendor`, generated Go source, tests, and all
 symlinks. `--include-tests` lifts only the test exclusion. Explicit file paths
 override automatic exclusions and Git ignores. Explicit directory paths do not.
+Only regular files are parsed: discovered special files such as FIFOs are
+skipped, while explicitly naming a non-regular file is an error.
 Explicit symlinks resolve to their real file or directory; subsequently
 discovered symlinks are still skipped. Real paths deduplicate inputs and identify
 files for `--cross-file-only`, independently of argument order.
@@ -140,14 +142,16 @@ when appropriate; one-line types are always eligible.
 
 ### JSON and exit status
 
-`--format json` writes exactly one JSON document to stdout. Diagnostics also
-appear on stderr, never mixed into JSON. `--print` adds `source` fields.
+Reports go to stdout; logs use `slog` on stderr. `--format json` writes exactly
+one JSON document to stdout, never mixed with logs. Warnings and errors also
+appear on stderr. Skip logs are debug-level and suppressed by default; their
+diagnostics remain in the structured report.
+`--print` adds `source` fields.
 
-Schema version 1 has these fields:
+The JSON document has these fields:
 
 | Field | Contents |
 |---|---|
-| `schema_version` | Integer `1` |
 | `status` | `"complete"` or `"incomplete"` |
 | `summary` | File, skip-reason, filtered-function, declaration, eligible-candidate, pruned-pair, distance-call, and match counts; function/type candidate counts are separate |
 | `declarations` | `id`, `kind` (`function` or `type`), `name`, `file`, `start`, `end`, `nodes`; function `signature` and optional `receiver`; type `type_kind` and optional true `alias` |

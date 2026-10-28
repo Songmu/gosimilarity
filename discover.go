@@ -165,6 +165,10 @@ func discover(ctx context.Context, paths []string, cwd string, opts options, res
 			continue
 		}
 		if !info.IsDir() {
+			if !info.Mode().IsRegular() {
+				result.diagnose("error", "discovery", displayPath(cwd, name), "", "input is not a regular file")
+				continue
+			}
 			if filepath.Ext(name) != ".go" {
 				result.diagnose("error", "discovery", displayPath(cwd, name), "", "input is not a Go file")
 				continue
@@ -247,6 +251,11 @@ func discover(ctx context.Context, paths []string, cwd string, opts options, res
 				}
 				if info.Mode()&os.ModeSymlink != 0 {
 					result.skip("symlink", shown, "automatically discovered symlink")
+					link = true
+					break
+				}
+				if p == name && !info.Mode().IsRegular() {
+					result.skip("non_regular", shown, "not a regular Go file")
 					link = true
 					break
 				}

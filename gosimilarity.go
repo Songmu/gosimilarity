@@ -143,8 +143,8 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	return o, paths, ver, nil
 }
 
-// Run finds structurally similar Go declarations and writes text or schema-v1
-// JSON. Errors expose ExitCode() int: 1 for requested duplicate failure, 2 for
+// Run finds structurally similar Go declarations and writes text or JSON.
+// Errors expose ExitCode() int: 1 for requested duplicate failure, 2 for
 // invalid arguments or an incomplete inspection. Help returns flag.ErrHelp.
 func Run(ctx context.Context, argv []string, outStream, errStream io.Writer) error {
 	o, paths, ver, err := parseOptions(argv, errStream)
@@ -167,10 +167,8 @@ func Run(ctx context.Context, argv []string, outStream, errStream io.Writer) err
 			analyze(ctx, paths, cwd, o, r)
 		}
 	}
-	for _, d := range r.Diagnostics {
-		if _, e := fmt.Fprintf(errStream, "%s: %s: %s %s\n", d.Severity, d.Stage, d.File, d.Message); e != nil {
-			return &exitError{2, e.Error()}
-		}
+	if err := logDiagnostics(ctx, errStream, r.Diagnostics); err != nil {
+		return &exitError{2, err.Error()}
 	}
 	if o.format == "json" {
 		enc := json.NewEncoder(outStream)

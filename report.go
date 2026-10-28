@@ -1,8 +1,10 @@
 package gosimilarity
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"slices"
 )
@@ -71,18 +73,17 @@ type summary struct {
 }
 
 type report struct {
-	SchemaVersion int           `json:"schema_version"`
-	Status        string        `json:"status"`
-	Summary       summary       `json:"summary"`
-	Declarations  []declaration `json:"declarations"`
-	Pairs         []pair        `json:"pairs"`
-	Groups        []group       `json:"groups"`
-	Diagnostics   []diagnostic  `json:"diagnostics"`
+	Status       string        `json:"status"`
+	Summary      summary       `json:"summary"`
+	Declarations []declaration `json:"declarations"`
+	Pairs        []pair        `json:"pairs"`
+	Groups       []group       `json:"groups"`
+	Diagnostics  []diagnostic  `json:"diagnostics"`
 }
 
 func newReport() *report {
 	return &report{
-		SchemaVersion: 1, Status: "complete",
+		Status:       "complete",
 		Summary:      summary{SkippedReasons: make(map[string]int)},
 		Declarations: []declaration{}, Pairs: []pair{}, Groups: []group{}, Diagnostics: []diagnostic{},
 	}
@@ -99,6 +100,39 @@ func (r *report) skip(reason, file, message string) {
 	r.Summary.SkippedFiles++
 	r.Summary.SkippedReasons[reason]++
 	r.diagnose("info", "skip", file, "", message)
+}
+
+func logDiagnostics(ctx context.Context, w io.Writer, diagnostics []diagnostic) error {
+	handler := slog.NewTextHandler(w, nil)
+	for _, d := range diagnostics {
+		level := slog.LevelInfo
+		switch d.Severity {
+		case "warning":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		default:
+			if d.Stage == "skip" {
+				level = slog.LevelDebug
+			}
+		}
+		if !handler.Enabled(ctx, level) {
+			continue
+		}
+		// Omit timestamps and propagate handler errors for deterministic CLI output.
+		record := slog.Record{Level: level, Message: d.Message}
+		record.AddAttrs(slog.String("stage", d.Stage))
+		if d.File != "" {
+			record.AddAttrs(slog.String("file", d.File))
+		}
+		if d.Declaration != "" {
+			record.AddAttrs(slog.String("declaration", d.Declaration))
+		}
+		if err := handler.Handle(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *report) groupPairs() {
