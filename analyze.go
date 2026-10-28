@@ -124,6 +124,7 @@ func typeKind(expr ast.Expr) string {
 func compare(ctx context.Context, opts options, r *report) {
 pairs:
 	for i := range r.Declarations {
+		a := &r.Declarations[i]
 		if ctx.Err() != nil {
 			r.diagnose("error", "compare", "", "", ctx.Err().Error())
 			break
@@ -133,7 +134,25 @@ pairs:
 				r.diagnose("error", "compare", "", "", ctx.Err().Error())
 				break pairs
 			}
-			if !opts.acceptsPair(&r.Declarations[i], &r.Declarations[j]) {
+			b := &r.Declarations[j]
+			if a.Kind != b.Kind || (a.Kind == "type" && a.TypeKind != b.TypeKind) ||
+				(opts.crossFileOnly && a.File == b.File) {
+				continue
+			}
+			if a.Kind == "function" &&
+				((!strings.Contains(a.Name, opts.filterFunction) && !strings.Contains(b.Name, opts.filterFunction)) ||
+					(!strings.Contains(a.body, opts.filterBody) && !strings.Contains(b.body, opts.filterBody))) {
+				continue
+			}
+			r.Summary.CandidatePairs++
+			if a.Kind == "function" {
+				r.Summary.FunctionCandidates++
+			} else {
+				r.Summary.TypeCandidates++
+			}
+			if similarityUpperBound(a.Nodes, b.Nodes) < opts.threshold ||
+				(a.tree != b.tree && opts.threshold == 1) {
+				r.Summary.PrunedPairs++
 				continue
 			}
 			r.comparePair(i, j, &opts)
@@ -142,36 +161,10 @@ pairs:
 	r.finishComparison()
 }
 
-func (o *options) acceptsPair(a, b *declaration) bool {
-	if a.Kind != b.Kind || (a.Kind == "type" && a.TypeKind != b.TypeKind) ||
-		(o.crossFileOnly && a.File == b.File) {
-		return false
-	}
-	if a.Kind == "function" {
-		return (strings.Contains(a.Name, o.filterFunction) || strings.Contains(b.Name, o.filterFunction)) &&
-			(strings.Contains(a.body, o.filterBody) || strings.Contains(b.body, o.filterBody))
-	}
-	return true
-}
-
 func (r *report) comparePair(i, j int, opts *options) {
 	a, b := &r.Declarations[i], &r.Declarations[j]
-	r.Summary.CandidatePairs++
-	if a.Kind == "function" {
-		r.Summary.FunctionCandidates++
-	} else {
-		r.Summary.TypeCandidates++
-	}
-	if similarityUpperBound(a.Nodes, b.Nodes) < opts.threshold {
-		r.Summary.PrunedPairs++
-		return
-	}
 	d := 0.0
 	if a.tree != b.tree {
-		if opts.threshold == 1 {
-			r.Summary.PrunedPairs++
-			return
-		}
 		r.Summary.DistanceCalls++
 		d = distance(a.tree, b.tree, opts.renameCost)
 	}
