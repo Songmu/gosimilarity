@@ -126,6 +126,114 @@ func (b *bindings) short(lhs []ast.Expr) {
 	}
 }
 
+func (b *bindings) receiverTypeParams(recv *ast.FieldList) {
+	if recv == nil {
+		return
+	}
+	// Receiver type arguments declare method-local type parameters.
+	for _, f := range recv.List {
+		typ := unparen(f.Type)
+		if p, ok := typ.(*ast.StarExpr); ok {
+			typ = unparen(p.X)
+		}
+		var args []ast.Expr
+		switch t := typ.(type) {
+		case *ast.IndexExpr:
+			args = []ast.Expr{t.Index}
+		case *ast.IndexListExpr:
+			args = t.Indices
+		}
+		for _, arg := range args {
+			if id, ok := arg.(*ast.Ident); ok {
+				b.declare(id, "type-param")
+			}
+		}
+	}
+}
+
+func (b *bindings) genDecl(n *ast.GenDecl) {
+	for _, spec := range n.Specs {
+		switch s := spec.(type) {
+		case *ast.TypeSpec:
+			if b.idents[s.Name] == nil {
+				b.declare(s.Name, "named-type")
+			}
+			b.push()
+			b.typeParams(s.TypeParams)
+			b.walk(s.Type)
+			b.pop()
+		case *ast.ValueSpec:
+			b.walk(s.Type)
+			for _, v := range s.Values {
+				b.walk(v)
+			}
+			for _, id := range s.Names {
+				if b.idents[id] == nil {
+					b.declare(id, "variable")
+				}
+			}
+		}
+	}
+}
+
+func (b *bindings) typeSwitch(n *ast.TypeSwitchStmt) {
+	b.push()
+	b.walk(n.Init)
+	var guard *ast.Ident
+	if a, ok := n.Assign.(*ast.AssignStmt); ok && a.Tok == token.DEFINE {
+		if len(a.Lhs) == 1 {
+			guard, _ = a.Lhs[0].(*ast.Ident)
+		}
+		for _, rhs := range a.Rhs {
+			b.walk(rhs)
+		}
+	} else {
+		b.walk(n.Assign)
+	}
+	guardBinding := &binding{kind: "type-switch-guard"}
+	if guard != nil {
+		b.idents[guard] = guardBinding
+	}
+	for caseNum, stmt := range n.Body.List {
+		c := stmt.(*ast.CaseClause)
+		for _, typ := range c.List {
+			b.walk(typ)
+		}
+		b.push()
+		// The guard's spelling is a declaration, but each case has its own binding.
+		if guard != nil {
+			b.current.names[guard.Name] = &binding{
+				kind: "type-switch-case", guard: guardBinding, caseNum: caseNum,
+			}
+		}
+		for _, s := range c.Body {
+			b.walk(s)
+		}
+		b.pop()
+	}
+	b.pop()
+}
+
+func (b *bindings) compositeLit(n *ast.CompositeLit) {
+	b.walk(n.Type)
+	expressionKeys := false
+	switch unparen(n.Type).(type) {
+	case *ast.MapType, *ast.ArrayType:
+		expressionKeys = true
+	}
+	for _, e := range n.Elts {
+		if kv, ok := e.(*ast.KeyValueExpr); ok {
+			_, bareKey := unparen(kv.Key).(*ast.Ident)
+			if !bareKey || expressionKeys {
+				b.walk(kv.Key)
+			}
+			b.walk(kv.Value)
+		} else {
+			b.walk(e)
+		}
+	}
+}
+
 func (b *bindings) walk(node ast.Node) {
 	if node == nil {
 		return
@@ -135,27 +243,7 @@ func (b *bindings) walk(node ast.Node) {
 		b.reference(n)
 	case *ast.FuncDecl:
 		b.push()
-		if n.Recv != nil {
-			// Receiver type arguments declare method-local type parameters.
-			for _, f := range n.Recv.List {
-				typ := unparen(f.Type)
-				if p, ok := typ.(*ast.StarExpr); ok {
-					typ = unparen(p.X)
-				}
-				var args []ast.Expr
-				switch t := typ.(type) {
-				case *ast.IndexExpr:
-					args = []ast.Expr{t.Index}
-				case *ast.IndexListExpr:
-					args = t.Indices
-				}
-				for _, arg := range args {
-					if id, ok := arg.(*ast.Ident); ok {
-						b.declare(id, "type-param")
-					}
-				}
-			}
-		}
+		b.receiverTypeParams(n.Recv)
 		b.signature(n.Type, n.Recv)
 		b.block(n.Body)
 		b.pop()
@@ -173,28 +261,7 @@ func (b *bindings) walk(node ast.Node) {
 		b.block(n)
 		b.pop()
 	case *ast.GenDecl:
-		for _, spec := range n.Specs {
-			switch s := spec.(type) {
-			case *ast.TypeSpec:
-				if b.idents[s.Name] == nil {
-					b.declare(s.Name, "named-type")
-				}
-				b.push()
-				b.typeParams(s.TypeParams)
-				b.walk(s.Type)
-				b.pop()
-			case *ast.ValueSpec:
-				b.walk(s.Type)
-				for _, v := range s.Values {
-					b.walk(v)
-				}
-				for _, id := range s.Names {
-					if b.idents[id] == nil {
-						b.declare(id, "variable")
-					}
-				}
-			}
-		}
+		b.genDecl(n)
 	case *ast.DeclStmt:
 		b.walk(n.Decl)
 	case *ast.AssignStmt:
@@ -247,41 +314,7 @@ func (b *bindings) walk(node ast.Node) {
 		b.block(n.Body)
 		b.pop()
 	case *ast.TypeSwitchStmt:
-		b.push()
-		b.walk(n.Init)
-		var guard *ast.Ident
-		if a, ok := n.Assign.(*ast.AssignStmt); ok && a.Tok == token.DEFINE {
-			if len(a.Lhs) == 1 {
-				guard, _ = a.Lhs[0].(*ast.Ident)
-			}
-			for _, rhs := range a.Rhs {
-				b.walk(rhs)
-			}
-		} else {
-			b.walk(n.Assign)
-		}
-		guardBinding := &binding{kind: "type-switch-guard"}
-		if guard != nil {
-			b.idents[guard] = guardBinding
-		}
-		for caseNum, stmt := range n.Body.List {
-			c := stmt.(*ast.CaseClause)
-			for _, typ := range c.List {
-				b.walk(typ)
-			}
-			b.push()
-			// The guard's spelling is a declaration, but each case has its own binding.
-			if guard != nil {
-				b.current.names[guard.Name] = &binding{
-					kind: "type-switch-case", guard: guardBinding, caseNum: caseNum,
-				}
-			}
-			for _, s := range c.Body {
-				b.walk(s)
-			}
-			b.pop()
-		}
-		b.pop()
+		b.typeSwitch(n)
 	case *ast.CaseClause:
 		for _, expr := range n.List {
 			b.walk(expr)
@@ -309,23 +342,7 @@ func (b *bindings) walk(node ast.Node) {
 			b.walk(f.Type)
 		}
 	case *ast.CompositeLit:
-		b.walk(n.Type)
-		expressionKeys := false
-		switch unparen(n.Type).(type) {
-		case *ast.MapType, *ast.ArrayType:
-			expressionKeys = true
-		}
-		for _, e := range n.Elts {
-			if kv, ok := e.(*ast.KeyValueExpr); ok {
-				_, bareKey := unparen(kv.Key).(*ast.Ident)
-				if !bareKey || expressionKeys {
-					b.walk(kv.Key)
-				}
-				b.walk(kv.Value)
-			} else {
-				b.walk(e)
-			}
-		}
+		b.compositeLit(n)
 	case *ast.BranchStmt:
 		// Labels are not variable references.
 	case *ast.LabeledStmt:
