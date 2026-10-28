@@ -36,9 +36,10 @@ tags, OS, or architecture constraints.
 Function bodies are compared as ordered syntax trees. Parameter, receiver,
 result, and local-variable names are normalized using syntactic scopes, including
 closures and shadowing. Function names and signatures do not contribute to body
-similarity. Type declarations use the same engine, normalizing their own names,
-self-references, and type parameters. Only types with the same syntactic RHS kind
-are compared; named types are not expanded.
+similarity. Type declarations use the same engine, retaining declared names,
+self-references, field names, field types, and tags while normalizing type
+parameter names. Only types with the same syntactic RHS kind are compared; named
+types are not expanded.
 
 Operators, statement order, field and method names, unresolved identifiers, and
 literal source spellings are retained. Comments, positions, and redundant
@@ -125,7 +126,9 @@ replacement cost (default `0.3`), and the subtree node count for insertion or
 deletion. Children are aligned by dynamic programming; deleting a node does not
 promote its children. Replacing an entire tree by deletion and insertion charges
 **both** operations. Similarity is `max(0, 1 - distance/max(nodesA,nodesB))`.
-Role wrappers and empty slots count as nodes, so `--min-tokens` is not a lexical
+Nodes represent syntax constructs, identifiers, and literals. Child roles and
+scalar attributes (such as operators) are encoded in labels; field-list
+containers and absent slots do not count as nodes. `--min-tokens` is not a lexical
 token count. Signatures can establish bindings without contributing tree nodes.
 
 Interned subtrees are verified structurally, and size differences provide a safe

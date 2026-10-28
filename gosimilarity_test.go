@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,14 +57,14 @@ type Alias = string
 type Names []string
 type Shape interface { Open() error }
 `)
-	writeFile(t, "b.go", `package example
+	writeFile(t, "b.go", `package other
 func Second(y int) int {
 	return y + 1
 }
-type Item[U any] struct { Next *Item[U]; Value U }
-type Text = string
-type Labels []string
-type Other interface { Open() error }
+type Node[U any] struct { Next *Node[U]; Value U }
+type Alias = string
+type Names []string
+type Shape interface { Open() error }
 `)
 	r, code, _ := runJSON(t, "a.go", "-t", "1", "b.go", "-p", "--fail-on-duplicates")
 	if code != 1 || r.Status != "complete" || len(r.Pairs) != 5 || r.Summary.Functions != 2 || r.Summary.Types != 8 {
@@ -133,6 +134,67 @@ func TestPartialFailureAndSizeOptions(t *testing.T) {
 	r, code, _ = runJSON(t, "missing.go", "--fail-on-duplicates", "ok.go")
 	if code != 2 || r.Status != "incomplete" || len(r.Pairs) != 1 {
 		t.Fatal("missing explicit file did not override duplicate exit")
+	}
+}
+
+func TestCompactTypeSimilarity(t *testing.T) {
+	for _, tt := range []struct {
+		name, source, threshold string
+		nodes                   int
+		similarity              float64
+	}{
+		{
+			"unrelated fields",
+			"type inputFile struct { path string; direct bool }\ntype exitError struct { code int; message string }",
+			".87", 9, 1 - 1.5/9,
+		},
+		{
+			"declared name",
+			"type A struct { Value int }\ntype B struct { Value int }",
+			"1", 6, .95,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			writeFile(t, "example.go", "package example\n"+tt.source)
+			r, code, _ := runJSON(t, ".", "-t", "0")
+			if code != 0 || len(r.Pairs) != 1 || len(r.Declarations) != 2 {
+				t.Fatalf("unexpected report: code=%d, %+v", code, r)
+			}
+			if math.Abs(r.Pairs[0].Similarity-tt.similarity) > 1e-12 {
+				t.Fatalf("similarity = %g, want %g", r.Pairs[0].Similarity, tt.similarity)
+			}
+			for _, d := range r.Declarations {
+				if d.Nodes != tt.nodes {
+					t.Fatalf("nodes = %d, want %d", d.Nodes, tt.nodes)
+				}
+			}
+			r, code, _ = runJSON(t, ".", "-t", tt.threshold)
+			if code != 0 || len(r.Pairs) != 0 {
+				t.Fatal("type difference passed the threshold")
+			}
+		})
+	}
+}
+
+func TestCompactFunctionSize(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "example.go", `package example
+func First(x int) int {
+	return x + 1
+}
+func Second(y int) int {
+	return y + 2
+}
+`)
+	r, code, _ := runJSON(t, ".", "--min-tokens", "5")
+	if code != 0 || len(r.Pairs) != 1 || r.Summary.Functions != 2 ||
+		math.Abs(r.Pairs[0].Similarity-.94) > 1e-12 {
+		t.Fatalf("unexpected compact function score: code=%d, %+v", code, r)
+	}
+	r, code, _ = runJSON(t, ".", "--min-tokens", "6")
+	if code != 0 || r.Summary.Functions != 0 || r.Summary.FilteredFunctions != 2 || len(r.Pairs) != 0 {
+		t.Fatal("min-tokens counted containers or absent slots")
 	}
 }
 

@@ -34,20 +34,7 @@ func normalizeSource(t *testing.T, ts *trees, src string, types bool) []*tree {
 			}
 		case *ast.TypeSpec:
 			if types {
-				n.self = b.idents[v.Name]
-				p, e := n.node(v.TypeParams)
-				if e != nil {
-					t.Fatal(e)
-				}
-				rhs, e := n.node(v.Type)
-				err = e
-				if e == nil {
-					if !v.Assign.IsValid() {
-						normalized = ts.node("definition", p, rhs)
-					} else {
-						normalized = ts.node("alias", p, rhs)
-					}
-				}
+				normalized, err = n.node(v)
 			}
 		}
 		if err != nil {
@@ -101,6 +88,10 @@ func TestNormalization(t *testing.T) {
 		{"array keys", "func f() { const k=0; use([2]int{k:1}) }", "func g() { const j=0; use([2]int{j:1}) }", true},
 		{"named literal parenthesized key", "func f() { const k=0; use(M{k:1}) }", "func g() { const k=0; use(M{(k):1}) }", true},
 		{"variadic call", "func f(x []int) { use(x...) }", "func g(y []int) { use(y) }", false},
+		{"child roles", "func f() { for ; ; tick() {} }", "func g() { for tick(); ; {} }", false},
+		{"slice slots", "func f(x []int) { use(x[1:]) }", "func g(y []int) { use(y[:1]) }", false},
+		{"empty optional body", "func f() { if ready() {} }", "func g() { if ready() {} else {} }", false},
+		{"assignment lists", "func f(x,y,z int) { x,y=z }", "func g(x,y,z int) { x=y,z }", false},
 		{"comments", "func f() { /* ignored */ work() }", "func g() { work() }", true},
 		{"generic receiver", "type Box[T any] struct{}; func (b Box[T]) f(x T) { use(b,x) }", "type Box[U any] struct{}; func (c Box[U]) g(y U) { use(c,y) }", true},
 	}
@@ -112,6 +103,9 @@ func TestNormalization(t *testing.T) {
 			if got := equalTrees(a, b); got != tt.equal {
 				t.Fatalf("equal = %v, want %v", got, tt.equal)
 			}
+			if d := distance(a, b, .3); (d == 0) != tt.equal {
+				t.Fatalf("distance = %g, equality = %v", d, tt.equal)
+			}
 		})
 	}
 }
@@ -121,16 +115,21 @@ func TestTypeNormalization(t *testing.T) {
 		a, b  string
 		equal bool
 	}{
-		{"type A struct { X int }", "type B struct { X int }", true},
-		{"type Node[T any] struct { Next *Node[T]; Value T }", "type Item[U any] struct { Next *Item[U]; Value U }", true},
-		{"type A struct { X int }", "type B struct { Y int }", false},
-		{"type A interface { Open() error }", "type B interface { Close() error }", false},
-		{"type A External", "type B Other", false},
-		{"type A = string", "type B string", false},
-		{"type T[T any] struct { X T }", "type U[V any] struct { X V }", true},
+		{"type A struct { X int }", "type B struct { X int }", false},
+		{"type Node[T any] struct { Next *Node[T]; Value T }", "type Item[U any] struct { Next *Item[U]; Value U }", false},
+		{"type Node[T any] struct { Next *Node[T]; Value T }", "type Node[U any] struct { Next *Node[U]; Value U }", true},
+		{"type A struct { X int }", "type A struct { Y int }", false},
+		{"type A struct { X int }", "type A struct { X string }", false},
+		{"type A struct { X int `json:\"x\"` }", "type A struct { X int `json:\"y\"` }", false},
+		{"type A interface { Open() error }", "type A interface { Close() error }", false},
+		{"type A External", "type A Other", false},
+		{"type A = string", "type A string", false},
+		{"type T[T any] struct { X T }", "type T[V any] struct { X V }", true},
 		{"type T struct { T T }", "type U struct { U U }", false},
-		{"type A chan<- int", "type B <-chan int", false},
-		{"type A = func(x int) int", "type B = func(y int) int", true},
+		{"type A chan<- int", "type A <-chan int", false},
+		{"type A = func(x int) int", "type A = func(y int) int", true},
+		{"type A func(int)", "type A func() int", false},
+		{"type A[T any] struct { X T }", "type A[T comparable] struct { X T }", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.a+"/"+tt.b, func(t *testing.T) {

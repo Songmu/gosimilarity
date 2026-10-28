@@ -12,28 +12,24 @@ import (
 type normalizer struct {
 	trees    *trees
 	bindings *bindings
-	self     *binding
 	ids      map[*binding]int
 	source   []byte
 	file     *token.File
 }
 
-func (n *normalizer) ident(id *ast.Ident) *tree {
+func (n *normalizer) ident(id *ast.Ident) string {
 	obj := n.bindings.idents[id]
 	if obj != nil && obj.kind == "type-switch-guard" {
-		return n.trees.node("TypeSwitchGuard:" + strconv.Itoa(n.bindingID(obj)))
+		return "TypeSwitchGuard:" + strconv.Itoa(n.bindingID(obj))
 	}
 	if obj != nil && obj.kind == "type-switch-case" {
-		return n.trees.node("TypeSwitchCase:" + strconv.Itoa(n.bindingID(obj.guard)) + ":" + strconv.Itoa(obj.caseNum))
-	}
-	if obj != nil && obj == n.self {
-		return n.trees.node("SelfType")
+		return "TypeSwitchCase:" + strconv.Itoa(n.bindingID(obj.guard)) + ":" + strconv.Itoa(obj.caseNum)
 	}
 	if obj != nil && (obj.kind == "variable" || obj.kind == "type-param") {
 		i := n.bindingID(obj)
-		return n.trees.node("BoundIdent:" + obj.kind + ":" + strconv.Itoa(i))
+		return "BoundIdent:" + obj.kind + ":" + strconv.Itoa(i)
 	}
-	return n.trees.node("Ident:" + id.Name)
+	return "Ident:" + id.Name
 }
 
 func (n *normalizer) bindingID(obj *binding) int {
@@ -51,17 +47,21 @@ var (
 	nodeType     = reflect.TypeFor[ast.Node]()
 )
 
-// Field wrappers retain roles and empty slots. Every wrapper and syntax node
-// counts toward Size; positions, comments and redundant parentheses do not.
 func (n *normalizer) node(node ast.Node) (*tree, error) {
+	return n.nodeRole(node, "")
+}
+
+// Roles live on child labels and scalar attributes on parent labels. Field
+// lists are flattened so containers and absent slots do not inflate Size.
+func (n *normalizer) nodeRole(node ast.Node, role string) (*tree, error) {
 	if node == nil || reflect.ValueOf(node).IsNil() {
-		return n.trees.node("Nil"), nil
+		return nil, nil
 	}
 	switch v := node.(type) {
 	case *ast.ParenExpr:
-		return n.node(v.X)
+		return n.nodeRole(v.X, role)
 	case *ast.Ident:
-		return n.ident(v), nil
+		return n.trees.node(role + "|" + n.ident(v)), nil
 	case *ast.BasicLit:
 		value := v.Value
 		if v.Kind == token.STRING && len(value) > 0 && value[0] == '`' && n.file != nil {
@@ -74,15 +74,36 @@ func (n *normalizer) node(node ast.Node) (*tree, error) {
 			}
 			value = string(n.source[start : start+end+2])
 		}
-		return n.trees.node("BasicLit",
-			n.trees.node("Kind:"+v.Kind.String()),
-			n.trees.node("Value", n.trees.node("Value:"+value))), nil
+		return n.trees.node(role + "|BasicLit:" + v.Kind.String() + ":" + strconv.Quote(value)), nil
 	case *ast.BadExpr, *ast.BadStmt, *ast.BadDecl:
 		return nil, fmt.Errorf("invalid syntax node %T", node)
 	}
 	v := reflect.ValueOf(node).Elem()
 	typ := v.Type()
+	label := role + "|" + typ.Name()
 	children := make([]*tree, 0, v.NumField())
+	add := func(child ast.Node, role string) error {
+		if fields, ok := child.(*ast.FieldList); ok {
+			if fields != nil {
+				for _, field := range fields.List {
+					t, err := n.nodeRole(field, role+".List")
+					if err != nil {
+						return err
+					}
+					children = append(children, t)
+				}
+			}
+			return nil
+		}
+		t, err := n.nodeRole(child, role)
+		if err != nil {
+			return err
+		}
+		if t != nil {
+			children = append(children, t)
+		}
+		return nil
+	}
 	for i := 0; i < v.NumField(); i++ {
 		field := typ.Field(i)
 		switch field.Name {
@@ -94,44 +115,38 @@ func (n *normalizer) node(node ast.Node) (*tree, error) {
 			// Assign distinguishes a type alias; all other token positions
 			// are locations, not syntax attributes.
 			if field.Name == "Assign" || field.Name == "Ellipsis" {
-				children = append(children, n.trees.node(field.Name+":"+strconv.FormatBool(value.Int() != 0)))
+				label += "|" + field.Name + "=" + strconv.FormatBool(value.Int() != 0)
 			}
 			continue
 		}
 		if field.Type == tokenType {
-			children = append(children, n.trees.node(field.Name+":"+token.Token(value.Int()).String()))
+			label += "|" + field.Name + "=" + strconv.Quote(token.Token(value.Int()).String())
 			continue
 		}
-		var slots []*tree
 		switch {
 		case field.Type.Implements(nodeType):
 			var child ast.Node
 			if !value.IsNil() {
 				child = value.Interface().(ast.Node)
 			}
-			t, err := n.node(child)
-			if err != nil {
+			if err := add(child, field.Name); err != nil {
 				return nil, err
 			}
-			slots = append(slots, t)
 		case value.Kind() == reflect.Slice && field.Type.Elem().Implements(nodeType):
 			for j := 0; j < value.Len(); j++ {
-				t, err := n.node(value.Index(j).Interface().(ast.Node))
-				if err != nil {
+				if err := add(value.Index(j).Interface().(ast.Node), field.Name); err != nil {
 					return nil, err
 				}
-				slots = append(slots, t)
 			}
 		case value.Kind() == reflect.String:
-			slots = append(slots, n.trees.node("Value:"+value.String()))
+			label += "|" + field.Name + "=" + strconv.Quote(value.String())
 		case value.Kind() == reflect.Bool:
-			slots = append(slots, n.trees.node(strconv.FormatBool(value.Bool())))
+			label += "|" + field.Name + "=" + strconv.FormatBool(value.Bool())
 		case typ.Name() == "ChanType" && field.Name == "Dir":
-			slots = append(slots, n.trees.node(strconv.FormatInt(value.Int(), 10)))
+			label += "|" + field.Name + "=" + strconv.FormatInt(value.Int(), 10)
 		default:
 			return nil, fmt.Errorf("unsupported AST field %s.%s (%s)", typ.Name(), field.Name, field.Type)
 		}
-		children = append(children, n.trees.node(field.Name, slots...))
 	}
-	return n.trees.node(typ.Name(), children...), nil
+	return n.trees.node(label, children...), nil
 }
