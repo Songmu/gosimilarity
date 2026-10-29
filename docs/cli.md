@@ -2,6 +2,7 @@
 
 ```text
 gosimilarity [options] [files or directories...]
+gosimilarity --packages [options] [package patterns...]
 ```
 
 Paths and options may be interspersed. No paths means `.`; `--` ends options.
@@ -24,6 +25,8 @@ Paths and options may be interspersed. No paths means `.`; `--` ends options.
 | `--format text\|json` | `text` | Human-readable or structured output |
 | `--cross-file-only` | off | Exclude pairs from the same real file |
 | `--include-tests` | off | Include automatically discovered `*_test.go` |
+| `--packages` | off | Select build-eligible files using Go package patterns |
+| `--tags TAGS` | unset | Additional comma-separated build tags; requires `--packages` |
 | `--fail-on-duplicates` | off | Exit 1 for matches after a complete inspection |
 | `--help`, `-h` | | Show usage |
 | `--version`, `-V` | | Show version |
@@ -49,13 +52,46 @@ Outside Git, directories are scanned without applying Git ignore rules.
 Automatic discovery skips `.git`, `vendor`, generated Go source, tests, and
 symlinks. `--include-tests` lifts only the test exclusion. Explicit file paths
 override automatic exclusions and Git ignores; explicit directory paths do not.
-Build tags, OS, and architecture constraints do not affect file selection.
+Build tags, OS, and architecture constraints do not affect this default file
+selection mode.
 
 Only regular files are parsed. Discovered special files such as FIFOs and
 missing tracked files are normal skips; explicitly naming a non-regular file
 is an error. Explicit symlinks resolve to their real file or directory;
 subsequently discovered symlinks are still skipped. Real paths deduplicate
 inputs and identify files for `--cross-file-only`.
+
+### Package selection
+
+`--packages` uses `go list -e -find -json` instead of directory or Git discovery.
+Arguments are Go package patterns, not individual `.go` files. No arguments
+means `.` (the current package only); use `./...` to include packages
+recursively. Multiple and overlapping patterns are supported, and files are
+deduplicated before comparison. Comparisons can span selected packages.
+
+```sh
+gosimilarity --packages ./...
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 gosimilarity --packages ./...
+gosimilarity --packages --tags=integration,netgo --include-tests ./...
+```
+
+The Go command selects source files using its build environment, including
+`GOOS`, `GOARCH`, `CGO_ENABLED`, and build constraints. The target need not
+match the host running gosimilarity. `GOFLAGS` is inherited; an explicit
+`--tags` overrides its `-tags` setting, including `--tags=` to clear it.
+Go must be available on `PATH`, and package patterns must be resolvable in the
+current Go module, workspace, or GOPATH context.
+
+Selection includes original `GoFiles` and `CgoFiles`; `--include-tests` adds
+build-eligible `TestGoFiles` and `XTestGoFiles`, not test binaries or generated
+cgo compiler input. Dependencies are not resolved or automatically added,
+and packages are not compiled or type-checked.
+
+Git ignores do not apply in this mode. Generated source, symlinks, and
+automatically excluded paths are still skipped, and `--exclude` still wins.
+File-loading and `go list` errors make the inspection incomplete (exit 2);
+available partial results are preserved, with no fallback to all-target
+discovery. Go command warnings are included in diagnostics.
 
 ### Exclusions
 

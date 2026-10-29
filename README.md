@@ -78,6 +78,17 @@ gosimilarity . --threshold 0.95 --min-lines 10 --print
 gosimilarity . --exclude 'internal/legacy/**' --include-tests
 ```
 
+To inspect only files selected by Go's build constraints, use package patterns:
+
+```sh
+gosimilarity --packages ./...
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 gosimilarity --packages --tags=netgo ./...
+```
+
+Package mode requires Go on `PATH`. Use `.` for one package or `./...` for
+recursive selection; see [package selection](docs/cli.md#package-selection)
+for details.
+
 Type declarations are opt-in:
 
 ```sh
@@ -109,8 +120,9 @@ for all options, file selection rules, and the JSON format.
 - A 100% match means identical normalized syntax, **not equivalent behavior**
   or a guarantee that the code can safely be merged. Review matches before
   refactoring.
-- Analysis does not build the project, fetch dependencies, or perform type
-  checking. Source files are inspected regardless of build tags.
+- Analysis does not build the project or perform type checking. Default file
+  discovery does not fetch dependencies and inspects source regardless of
+  build tags; `--packages` delegates file selection to the Go command.
 - Directory scans skip tests, generated files, `vendor`, and symlinks by
   default, and respect Git ignores in Git working trees. Use `--include-tests`
   to include tests, or name individual files explicitly.

@@ -27,3 +27,15 @@ func TestInterspersedOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestPackageOptions(t *testing.T) {
+	o, paths, _, err := parseOptions([]string{"./cmd/...", "--packages", "--tags=integration,netgo", "./internal/..."}, io.Discard)
+	if err != nil || !o.packages || !o.tagsSet || o.tags != "integration,netgo" ||
+		!reflect.DeepEqual(paths, []string{"./cmd/...", "./internal/..."}) {
+		t.Fatalf("options=%+v paths=%v error=%v", o, paths, err)
+	}
+	o, paths, _, err = parseOptions([]string{"--packages", "--tags="}, io.Discard)
+	if err != nil || !o.packages || !o.tagsSet || o.tags != "" || !reflect.DeepEqual(paths, []string{"."}) {
+		t.Fatalf("options=%+v paths=%v error=%v", o, paths, err)
+	}
+}
