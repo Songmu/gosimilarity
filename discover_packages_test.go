@@ -2,6 +2,7 @@ package gosimilarity
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ func setupPackageModule(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
 	t.Setenv("GOENV", "off")
+	t.Setenv("GO111MODULE", "on")
 	t.Setenv("GOFLAGS", "")
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOTOOLCHAIN", "local")
@@ -221,13 +223,44 @@ func TestCommandLineArgumentsModule(t *testing.T) {
 }
 
 func TestMissingLocalPackageExclusions(t *testing.T) {
-	setupPackageModule(t)
-	writeFile(t, "base.go", "package fixture\ntype Base int")
-	for _, pattern := range []string{"./missing", "./missing/..."} {
-		t.Run(pattern, func(t *testing.T) {
-			r, code, stderr := runJSON(t, "--packages", ".", pattern, "--exclude=missing", "--types")
-			if code != 0 || r.Status != "complete" || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) ||
-				r.Summary.SkippedReasons["excluded"] != 1 {
+	for _, mode := range []string{"module", "GOPATH"} {
+		t.Run(mode, func(t *testing.T) {
+			setupPackageModule(t)
+			if mode == "GOPATH" {
+				gopath := t.TempDir()
+				dir := filepath.Join(gopath, "src", "example.com", "fixture")
+				writeFile(t, filepath.Join(dir, "base.go"), "package fixture\ntype Base int")
+				t.Setenv("GO111MODULE", "off")
+				t.Setenv("GOPATH", gopath)
+				t.Chdir(dir)
+			}
+			writeFile(t, "base.go", "package fixture\ntype Base int")
+			for _, pattern := range []string{"./missing", "./missing/..."} {
+				t.Run(pattern, func(t *testing.T) {
+					r, code, stderr := runJSON(t, "--packages", ".", pattern, "--exclude=missing", "--types")
+					if code != 0 || r.Status != "complete" || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) ||
+						r.Summary.SkippedReasons["excluded"] != 1 {
+						t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestPackageDiscoveryRequiredMetadata(t *testing.T) {
+	for _, name := range []string{"disabled cache", "missing embed target"} {
+		t.Run(name, func(t *testing.T) {
+			setupPackageModule(t)
+			source := "package main\ntype Base int"
+			if name == "disabled cache" {
+				t.Setenv("GOCACHE", "off")
+			} else {
+				source = "package main\nimport _ \"embed\"\n//go:embed missing.txt\nvar data string\ntype Base int"
+			}
+			writeFile(t, "base.go", source)
+			r, code, stderr := runJSON(t, "--packages", "--types")
+			if code != 0 || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) {
 				t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
 			}
 		})

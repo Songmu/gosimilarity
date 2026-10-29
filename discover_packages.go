@@ -23,7 +23,7 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			}
 		}
 	}
-	args := []string{"list", "-e", "-find", "-json"}
+	args := []string{"list", "-e", "-find", "-json=Dir,ImportPath,Match,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,Error"}
 	if opts.tagsSet {
 		args = append(args, "-tags="+opts.tags)
 	}
@@ -50,6 +50,7 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 		var pkg struct {
 			Dir          string
 			ImportPath   string
+			Match        []string
 			GoFiles      []string
 			CgoFiles     []string
 			TestGoFiles  []string
@@ -63,8 +64,14 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			break
 		}
 		packageDir := pkg.Dir
-		if packageDir == "" && (build.IsLocalImport(filepath.ToSlash(pkg.ImportPath)) || filepath.IsAbs(pkg.ImportPath)) {
-			packageDir = pkg.ImportPath
+		if packageDir == "" {
+			// GOPATH may rewrite missing local imports; Match retains the arguments.
+			for _, name := range append([]string{pkg.ImportPath}, pkg.Match...) {
+				if build.IsLocalImport(filepath.ToSlash(name)) || filepath.IsAbs(name) {
+					packageDir = name
+					break
+				}
+			}
 		}
 		var dir string
 		if packageDir != "" {

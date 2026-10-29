@@ -63,7 +63,10 @@ inputs and identify files for `--cross-file-only`.
 
 ### Package selection
 
-`--packages` uses `go list -e -find -json` instead of directory or Git discovery.
+`--packages` uses `go list -e -find` instead of directory or Git discovery,
+requesting only the JSON fields needed for source selection: `Dir`,
+`ImportPath`, `Match`, `GoFiles`, `CgoFiles`, `TestGoFiles`, `XTestGoFiles`,
+and `Error`. Build-cache, VCS, and embed metadata are not requested.
 Arguments are Go package patterns, not individual `.go` files. No arguments
 means `.` (the current package only); use `./...` to include packages
 recursively. Multiple and overlapping patterns are supported, and files are
@@ -84,8 +87,12 @@ current Go module, workspace, or GOPATH context.
 
 Selection includes original `GoFiles` and `CgoFiles`; `--include-tests` adds
 build-eligible `TestGoFiles` and `XTestGoFiles`, not test binaries or generated
-cgo compiler input. Dependencies are not resolved or automatically added,
-and packages are not compiled or type-checked.
+cgo compiler input. Dependency packages are not automatically added to the
+comparison, and packages are not compiled or type-checked.
+
+The Go command may resolve or download modules to locate requested packages.
+With inherited flags such as `GOFLAGS=-mod=mod`, it may also update `go.mod`
+and `go.sum`. Package mode is not guaranteed to be offline or read-only.
 
 Git ignores do not apply in this mode. Generated source, symlinks, and
 automatically excluded paths are still skipped, and `--exclude` still wins.
