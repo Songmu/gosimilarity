@@ -95,6 +95,11 @@ File-loading and `go list` errors make the inspection incomplete (exit 2);
 available partial results are preserved, with no fallback to all-target
 discovery. Go command warnings are included in diagnostics.
 
+Go loads package metadata before these filters run. A `.go` FIFO can block
+`go list`, so package mode cannot guarantee the default mode's pre-read
+skipping of special files. Keep selected package directories free of such
+files; API callers can cancel `Run` through its context.
+
 ### Exclusions
 
 Explicit `--exclude` always wins, even over direct file inputs. Patterns match
