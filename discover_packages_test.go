@@ -209,3 +209,13 @@ func TestPackageExclusionPrecedesErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandLineArgumentsModule(t *testing.T) {
+	setupPackageModule(t)
+	writeFile(t, "go.mod", "module command-line-arguments\n\ngo 1.24\n")
+	writeFile(t, "base.go", "package fixture\ntype Base int")
+	r, code, stderr := runJSON(t, "--packages", ".", "--types")
+	if code != 0 || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) {
+		t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}

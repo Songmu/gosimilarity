@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,14 @@ import (
 )
 
 func discoverPackages(ctx context.Context, patterns []string, cwd string, opts options, result *report) []inputFile {
+	for _, pattern := range patterns {
+		if strings.HasSuffix(pattern, ".go") {
+			if info, err := os.Stat(pattern); err == nil && !info.IsDir() {
+				result.diagnose("error", "packages", pattern, "", "--packages accepts package patterns, not Go file paths")
+				return nil
+			}
+		}
+	}
 	args := []string{"list", "-e", "-find", "-json"}
 	if opts.tagsSet {
 		args = append(args, "-tags="+opts.tags)
@@ -51,10 +60,6 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 		} else if err != nil {
 			result.diagnose("error", "packages", "", "", fmt.Sprintf("invalid go list output: %v", err))
 			break
-		}
-		if pkg.ImportPath == "command-line-arguments" {
-			result.diagnose("error", "packages", "", "", "--packages accepts package patterns, not Go file paths")
-			continue
 		}
 		var dir string
 		if pkg.Dir != "" {
