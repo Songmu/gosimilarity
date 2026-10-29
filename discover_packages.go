@@ -52,15 +52,26 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			result.diagnose("error", "packages", "", "", fmt.Sprintf("invalid go list output: %v", err))
 			break
 		}
+		if pkg.ImportPath == "command-line-arguments" {
+			result.diagnose("error", "packages", "", "", "--packages accepts package patterns, not Go file paths")
+			continue
+		}
+		var dir string
+		if pkg.Dir != "" {
+			dir, err = canonicalPath(pkg.Dir)
+			if err != nil {
+				result.diagnose("error", "packages", pkg.Dir, "", err.Error())
+				continue
+			}
+			if shown := displayPath(cwd, dir); excluded(shown, opts.excludes) {
+				result.skip("excluded", shown, "matched --exclude")
+				continue
+			}
+		}
 		if pkg.Error != nil {
 			result.diagnose("error", "packages", "", "", pkg.ImportPath+": "+pkg.Error.Err)
 		}
-		if pkg.Dir == "" {
-			continue
-		}
-		dir, err := canonicalPath(pkg.Dir)
-		if err != nil {
-			result.diagnose("error", "packages", pkg.Dir, "", err.Error())
+		if dir == "" {
 			continue
 		}
 		names := append(pkg.GoFiles, pkg.CgoFiles...)

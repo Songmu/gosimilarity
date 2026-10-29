@@ -89,6 +89,8 @@ and packages are not compiled or type-checked.
 
 Git ignores do not apply in this mode. Generated source, symlinks, and
 automatically excluded paths are still skipped, and `--exclude` still wins.
+Excluding a package directory also suppresses its package-loading errors;
+excluding individual files does not change how Go loads the package.
 File-loading and `go list` errors make the inspection incomplete (exit 2);
 available partial results are preserved, with no fallback to all-target
 discovery. Go command warnings are included in diagnostics.

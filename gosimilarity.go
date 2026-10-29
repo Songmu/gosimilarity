@@ -108,13 +108,6 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	if o.tagsSet && !o.packages {
 		return o, nil, false, errors.New("--tags requires --packages")
 	}
-	if o.packages {
-		for _, input := range paths {
-			if strings.HasSuffix(input, ".go") {
-				return o, nil, false, errors.New("--packages accepts package patterns, not Go file paths")
-			}
-		}
-	}
 	if !finite(o.threshold) || o.threshold < 0 || o.threshold > 1 {
 		return o, nil, false, errors.New("--threshold must be finite and between 0 and 1")
 	}

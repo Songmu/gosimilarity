@@ -175,3 +175,37 @@ func TestPackageDiscoverySymlink(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
 	}
 }
+
+func TestPackagePathsEndingInGo(t *testing.T) {
+	setupPackageModule(t)
+	writeFile(t, "component.go/source.go", "package component\ntype Component int")
+	writeFile(t, "target_windows.go", "package fixture\ntype Windows int")
+	for _, pattern := range []string{"./component.go", "example.com/fixture/component.go"} {
+		t.Run(pattern, func(t *testing.T) {
+			r, code, stderr := runJSON(t, "--packages", pattern, "--types")
+			if code != 0 || !reflect.DeepEqual(declarationFiles(r), []string{"component.go/source.go"}) {
+				t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
+			}
+		})
+	}
+	r, code, stderr := runJSON(t, "--packages", "target_windows.go", "--types")
+	if code != 2 || r.Summary.Files != 0 || !strings.Contains(stderr, "not Go file paths") {
+		t.Fatalf("file argument bypassed build constraints: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}
+
+func TestPackageExclusionPrecedesErrors(t *testing.T) {
+	setupPackageModule(t)
+	writeFile(t, "base.go", "package fixture\ntype Base int")
+	writeFile(t, "broken/first.go", "package first\ntype First int")
+	writeFile(t, "broken/second.go", "package second\ntype Second int")
+	for _, pattern := range []string{"broken", "broken/**"} {
+		t.Run(pattern, func(t *testing.T) {
+			r, code, stderr := runJSON(t, "--packages", "./...", "--exclude", pattern, "--types")
+			if code != 0 || r.Status != "complete" || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) ||
+				r.Summary.SkippedReasons["excluded"] != 1 {
+				t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
+			}
+		})
+	}
+}
