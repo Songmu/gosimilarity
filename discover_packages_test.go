@@ -219,3 +219,17 @@ func TestCommandLineArgumentsModule(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
 	}
 }
+
+func TestMissingLocalPackageExclusions(t *testing.T) {
+	setupPackageModule(t)
+	writeFile(t, "base.go", "package fixture\ntype Base int")
+	for _, pattern := range []string{"./missing", "./missing/..."} {
+		t.Run(pattern, func(t *testing.T) {
+			r, code, stderr := runJSON(t, "--packages", ".", pattern, "--exclude=missing", "--types")
+			if code != 0 || r.Status != "complete" || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) ||
+				r.Summary.SkippedReasons["excluded"] != 1 {
+				t.Fatalf("code=%d stderr=%s report=%+v", code, stderr, r)
+			}
+		})
+	}
+}

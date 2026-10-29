@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/build"
 	"io"
 	"os"
 	"os/exec"
@@ -61,11 +62,18 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			result.diagnose("error", "packages", "", "", fmt.Sprintf("invalid go list output: %v", err))
 			break
 		}
+		packageDir := pkg.Dir
+		if packageDir == "" && (build.IsLocalImport(filepath.ToSlash(pkg.ImportPath)) || filepath.IsAbs(pkg.ImportPath)) {
+			packageDir = pkg.ImportPath
+		}
 		var dir string
-		if pkg.Dir != "" {
-			dir, err = canonicalPath(pkg.Dir)
+		if packageDir != "" {
+			if !filepath.IsAbs(packageDir) {
+				packageDir = cwd + string(os.PathSeparator) + packageDir
+			}
+			dir, err = canonicalPath(packageDir)
 			if err != nil {
-				result.diagnose("error", "packages", pkg.Dir, "", err.Error())
+				result.diagnose("error", "packages", packageDir, "", err.Error())
 				continue
 			}
 			if shown := displayPath(cwd, dir); excluded(shown, opts.excludes) {
@@ -76,7 +84,7 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 		if pkg.Error != nil {
 			result.diagnose("error", "packages", "", "", pkg.ImportPath+": "+pkg.Error.Err)
 		}
-		if dir == "" {
+		if pkg.Dir == "" {
 			continue
 		}
 		names := append(pkg.GoFiles, pkg.CgoFiles...)
