@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"strings"
+
+	"github.com/Songmu/flagx"
 )
 
 const cmdName = "gosimilarity"
@@ -56,6 +59,24 @@ func (p *patterns) Set(v string) error {
 	return nil
 }
 
+type floatValue float64
+
+func (f *floatValue) Set(s string) error {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return errors.New("parse error")
+	}
+	*f = floatValue(v)
+	return nil
+}
+
+func (f *floatValue) String() string {
+	if f == nil {
+		return "0"
+	}
+	return strconv.FormatFloat(float64(*f), 'g', -1, 64)
+}
+
 func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, error) {
 	var o options
 	var ver bool
@@ -63,33 +84,28 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	var excludes patterns
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(errStream)
-	fs.Usage = func() {
-		fmt.Fprintln(errStream, "Usage: gosimilarity [options] [files or directories...]\n       gosimilarity --packages [options] [package patterns...]\n\nFind structurally similar Go functions and type declarations.\nWith --packages, . selects one package; ./... selects packages recursively.")
-		fs.PrintDefaults()
-	}
-	fs.Float64Var(&o.threshold, "threshold", 0.87, "similarity threshold (0..1)")
-	fs.Float64Var(&o.threshold, "t", 0.87, "alias for --threshold")
-	fs.Float64Var(&o.renameCost, "rename-cost", 0.3, "positive node replacement cost")
-	fs.Float64Var(&o.renameCost, "r", 0.3, "alias for --rename-cost")
-	fs.IntVar(&o.minLines, "min-lines", 3, "minimum function declaration lines")
-	fs.IntVar(&o.minLines, "m", 3, "alias for --min-lines")
-	fs.IntVar(&o.minTokens, "min-tokens", 0, "minimum normalized function tree nodes (overrides --min-lines)")
-	fs.BoolVar(&compareTypes, "types", false, "include type comparisons")
-	fs.BoolVar(&o.noFunctions, "no-functions", false, "compare only types")
-	fs.BoolVar(&o.noTypes, "no-types", false, "disable type comparisons")
-	fs.BoolVar(&o.print, "print", false, "include original declarations")
-	fs.BoolVar(&o.print, "p", false, "alias for --print")
-	fs.BoolVar(&o.includeTests, "include-tests", false, "include discovered test files")
-	fs.BoolVar(&o.packages, "packages", false, "select build-eligible files using Go package patterns")
-	fs.StringVar(&o.tags, "tags", "", "additional build tags for --packages (comma-separated)")
-	fs.BoolVar(&o.crossFileOnly, "cross-file-only", false, "exclude same-file comparisons")
-	fs.BoolVar(&o.failDuplicates, "fail-on-duplicates", false, "exit 1 when matches are found")
-	fs.StringVar(&o.format, "format", "text", "output format: text or json")
-	fs.StringVar(&o.filterFunction, "filter-function", "", "pair-side function name substring")
-	fs.StringVar(&o.filterBody, "filter-function-body", "", "pair-side original body substring")
-	fs.Var(&excludes, "exclude", "exclude cwd-relative glob (repeatable; ** matches directories)")
-	fs.BoolVar(&ver, "version", false, "display version")
-	fs.BoolVar(&ver, "V", false, "alias for --version")
+	fs.Usage = flagx.Usage(fs,
+		"gosimilarity [options] [files or directories...]\n       gosimilarity --packages [options] [package patterns...]",
+		"Find structurally similar Go functions and type declarations.\nWith --packages, . selects one package; ./... selects packages recursively.")
+	o.threshold, o.renameCost = 0.87, 0.3
+	flagx.Var(fs, (*floatValue)(&o.threshold), "threshold|t", "similarity threshold (0..1)")
+	flagx.Var(fs, (*floatValue)(&o.renameCost), "rename-cost|r", "positive node replacement cost")
+	flagx.IntVar(fs, &o.minLines, "min-lines|m", 3, "minimum function declaration lines")
+	flagx.IntVar(fs, &o.minTokens, "min-tokens", 0, "minimum normalized function tree nodes (overrides --min-lines)")
+	flagx.BoolVar(fs, &compareTypes, "types", false, "include type comparisons")
+	flagx.BoolVar(fs, &o.noFunctions, "no-functions", false, "compare only types")
+	flagx.BoolVar(fs, &o.noTypes, "no-types", false, "disable type comparisons")
+	flagx.BoolVar(fs, &o.print, "print|p", false, "include original declarations")
+	flagx.BoolVar(fs, &o.includeTests, "include-tests", false, "include discovered test files")
+	flagx.BoolVar(fs, &o.packages, "packages", false, "select build-eligible files using Go package patterns")
+	flagx.StringVar(fs, &o.tags, "tags", "", "additional build tags for --packages (comma-separated)")
+	flagx.BoolVar(fs, &o.crossFileOnly, "cross-file-only", false, "exclude same-file comparisons")
+	flagx.BoolVar(fs, &o.failDuplicates, "fail-on-duplicates", false, "exit 1 when matches are found")
+	flagx.StringVar(fs, &o.format, "format", "text", "output format: text or json")
+	flagx.StringVar(fs, &o.filterFunction, "filter-function", "", "pair-side function name substring")
+	flagx.StringVar(fs, &o.filterBody, "filter-function-body", "", "pair-side original body substring")
+	flagx.Var(fs, &excludes, "exclude", "exclude cwd-relative glob (repeatable; ** matches directories)")
+	flagx.BoolVar(fs, &ver, "version|V", false, "display version")
 	paths, err := parseInterspersed(fs, argv)
 	if err != nil {
 		return o, nil, false, err
