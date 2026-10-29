@@ -91,8 +91,8 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 		"gosimilarity [options] [files or directories...]\n       gosimilarity --packages [options] [package patterns...]",
 		"Find structurally similar Go functions and type declarations.\nWith --packages, . selects one package; ./... selects packages recursively.")
 	o.threshold, o.renameCost = 0.87, 0.3
-	flagx.Var(fs, (*floatValue)(&o.threshold), "threshold|t", "similarity threshold (0..1)")
-	flagx.Var(fs, (*floatValue)(&o.renameCost), "rename-cost|r", "positive node replacement cost")
+	flagx.Var(fs, (*floatValue)(&o.threshold), "threshold|t", "similarity threshold (`float` 0..1)")
+	flagx.Var(fs, (*floatValue)(&o.renameCost), "rename-cost|r", "positive node replacement cost (`float`)")
 	flagx.IntVar(fs, &o.minLines, "min-lines|m", 3, "minimum function declaration lines")
 	flagx.IntVar(fs, &o.minTokens, "min-tokens", 0, "minimum normalized function tree nodes (overrides --min-lines)")
 	flagx.BoolVar(fs, &compareTypes, "types", false, "include type comparisons")

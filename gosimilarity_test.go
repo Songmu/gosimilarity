@@ -234,7 +234,7 @@ func TestCLIOptions(t *testing.T) {
 			t.Fatal("help failed", err)
 		}
 		help := stderr.String()
-		for _, want := range []string{"-threshold, -t value", "(default 0.87)", "-rename-cost, -r value", "(default 0.3)", "-version, -V"} {
+		for _, want := range []string{"-threshold, -t float", "(default 0.87)", "-rename-cost, -r float", "(default 0.3)", "-version, -V"} {
 			if strings.Count(help, want) != 1 {
 				t.Errorf("%s help: want exactly one %q in:\n%s", arg, want, help)
 			}
