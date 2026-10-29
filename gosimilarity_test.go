@@ -240,10 +240,10 @@ func TestCLIOptions(t *testing.T) {
 			}
 		}
 	}
-	{
+	for _, c := range []struct{ val, want string }{{"1e400", "value out of range"}, {"abc", "parse error"}} {
 		var out, stderr bytes.Buffer
-		if err := Run(context.Background(), []string{"--threshold", "1e400"}, &out, &stderr); err == nil || !strings.Contains(stderr.String(), "value out of range") {
-			t.Errorf("expected out of range error, got %v: %s", err, stderr.String())
+		if err := Run(context.Background(), []string{"--threshold", c.val}, &out, &stderr); err == nil || !strings.Contains(stderr.String(), c.want) {
+			t.Errorf("--threshold %s: expected %q, got %v: %s", c.val, c.want, err, stderr.String())
 		}
 	}
 	for _, arg := range []string{"-V", "--version"} {
