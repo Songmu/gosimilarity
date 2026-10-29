@@ -233,6 +233,18 @@ func TestCLIOptions(t *testing.T) {
 		if err := Run(context.Background(), []string{arg}, &out, &stderr); !errors.Is(err, flag.ErrHelp) {
 			t.Fatal("help failed", err)
 		}
+		help := stderr.String()
+		for _, want := range []string{"-threshold, -t float", "(default 0.87)", "-rename-cost, -r float", "(default 0.3)", "-version, -V"} {
+			if strings.Count(help, want) != 1 {
+				t.Errorf("%s help: want exactly one %q in:\n%s", arg, want, help)
+			}
+		}
+	}
+	for _, c := range []struct{ val, want string }{{"1e400", "value out of range"}, {"abc", "parse error"}} {
+		var out, stderr bytes.Buffer
+		if err := Run(context.Background(), []string{"--threshold", c.val}, &out, &stderr); err == nil || !strings.Contains(stderr.String(), c.want) {
+			t.Errorf("--threshold %s: expected %q, got %v: %s", c.val, c.want, err, stderr.String())
+		}
 	}
 	for _, arg := range []string{"-V", "--version"} {
 		var out, stderr bytes.Buffer
