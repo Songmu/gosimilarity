@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.3](https://github.com/Songmu/gosimilarity/compare/v0.0.2...v0.0.3) - 2026-10-29
+
+- Use Songmu/flagx for flag aliases and help by @Songmu in https://github.com/Songmu/gosimilarity/pull/20
+
 ## [v0.0.2](https://github.com/Songmu/gosimilarity/compare/v0.0.1...v0.0.2) - 2026-10-29
 
 - Add build-aware package selection with --packages by @Songmu in https://github.com/Songmu/gosimilarity/pull/19
