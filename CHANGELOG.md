@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.2](https://github.com/Songmu/gosimilarity/compare/v0.0.1...v0.0.2) - 2026-10-29
+
+- Add build-aware package selection with --packages by @Songmu in https://github.com/Songmu/gosimilarity/pull/19
+
 ## [v0.0.1](https://github.com/Songmu/gosimilarity/commits/v0.0.1) - 2026-10-28
 
 - Bump reviewdog/action-misspell from 1.30.2 to 1.30.3 by @dependabot[bot] in https://github.com/Songmu/gosimilarity/pull/4
