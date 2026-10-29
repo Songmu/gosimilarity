@@ -1,0 +1,131 @@
+package gosimilarity
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"go/build"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+func discoverPackages(ctx context.Context, patterns []string, cwd string, opts options, result *report) []inputFile {
+	for _, pattern := range patterns {
+		if strings.HasSuffix(pattern, ".go") {
+			if info, err := os.Stat(pattern); err == nil && !info.IsDir() {
+				result.diagnose("error", "packages", pattern, "", "--packages accepts package patterns, not Go file paths")
+				return nil
+			}
+		}
+	}
+	args := []string{"list", "-e", "-find", "-json=Dir,ImportPath,Match,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,Error"}
+	if opts.tagsSet {
+		args = append(args, "-tags="+opts.tags)
+	}
+	args = append(args, "--")
+	args = append(args, patterns...)
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = cwd
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	data, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		message := fmt.Sprintf("go list failed: %v", err)
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			message += ": " + detail
+		}
+		result.diagnose("error", "packages", "", "", message)
+	} else if detail := strings.TrimSpace(stderr.String()); detail != "" {
+		result.diagnose("warning", "packages", "", "", detail)
+	}
+
+	files := make(map[string]bool)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	for {
+		var pkg struct {
+			Dir          string
+			ImportPath   string
+			Match        []string
+			GoFiles      []string
+			CgoFiles     []string
+			TestGoFiles  []string
+			XTestGoFiles []string
+			Error        *struct{ Pos, Err string }
+		}
+		if err := dec.Decode(&pkg); err == io.EOF {
+			break
+		} else if err != nil {
+			result.diagnose("error", "packages", "", "", fmt.Sprintf("invalid go list output: %v", err))
+			break
+		}
+		packageDir := pkg.Dir
+		if packageDir == "" {
+			// GOPATH may rewrite missing local imports; Match retains the arguments.
+			for _, name := range append([]string{pkg.ImportPath}, pkg.Match...) {
+				if build.IsLocalImport(filepath.ToSlash(name)) || filepath.IsAbs(name) {
+					packageDir = name
+					break
+				}
+			}
+		}
+		var dir string
+		if packageDir != "" {
+			if !filepath.IsAbs(packageDir) {
+				packageDir = cwd + string(os.PathSeparator) + packageDir
+			}
+			dir, err = canonicalPath(packageDir)
+			if err != nil {
+				result.diagnose("error", "packages", packageDir, "", err.Error())
+				continue
+			}
+			if shown := displayPath(cwd, dir); excluded(shown, opts.excludes) {
+				result.skip("excluded", shown, "matched --exclude")
+				continue
+			}
+		}
+		if pkg.Error != nil {
+			message := pkg.Error.Err
+			if pkg.Error.Pos != "" {
+				message = pkg.Error.Pos + ": " + message
+			}
+			result.diagnose("error", "packages", "", "", pkg.ImportPath+": "+message)
+		}
+		if pkg.Dir == "" {
+			continue
+		}
+		names := append(pkg.GoFiles, pkg.CgoFiles...)
+		if opts.includeTests {
+			names = append(names, pkg.TestGoFiles...)
+			names = append(names, pkg.XTestGoFiles...)
+		}
+		for _, name := range names {
+			files[filepath.Join(dir, name)] = true
+		}
+	}
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var inputs []inputFile
+	for _, name := range names {
+		shown := displayPath(cwd, name)
+		if excluded(shown, opts.excludes) {
+			result.skip("excluded", shown, "matched --exclude")
+			continue
+		}
+		if validDiscoveredFile(name, shown, opts.includeTests, result) {
+			inputs = append(inputs, inputFile{path: name})
+		}
+	}
+	return inputs
+}

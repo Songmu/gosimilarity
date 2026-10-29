@@ -24,6 +24,9 @@ type options struct {
 	noTypes        bool
 	print          bool
 	includeTests   bool
+	packages       bool
+	tags           string
+	tagsSet        bool
 	crossFileOnly  bool
 	failDuplicates bool
 	format         string
@@ -61,7 +64,7 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(errStream)
 	fs.Usage = func() {
-		fmt.Fprintln(errStream, "Usage: gosimilarity [options] [files or directories...]\n\nFind structurally similar Go functions and type declarations.")
+		fmt.Fprintln(errStream, "Usage: gosimilarity [options] [files or directories...]\n       gosimilarity --packages [options] [package patterns...]\n\nFind structurally similar Go functions and type declarations.\nWith --packages, . selects one package; ./... selects packages recursively.")
 		fs.PrintDefaults()
 	}
 	fs.Float64Var(&o.threshold, "threshold", 0.87, "similarity threshold (0..1)")
@@ -77,6 +80,8 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	fs.BoolVar(&o.print, "print", false, "include original declarations")
 	fs.BoolVar(&o.print, "p", false, "alias for --print")
 	fs.BoolVar(&o.includeTests, "include-tests", false, "include discovered test files")
+	fs.BoolVar(&o.packages, "packages", false, "select build-eligible files using Go package patterns")
+	fs.StringVar(&o.tags, "tags", "", "additional build tags for --packages (comma-separated)")
 	fs.BoolVar(&o.crossFileOnly, "cross-file-only", false, "exclude same-file comparisons")
 	fs.BoolVar(&o.failDuplicates, "fail-on-duplicates", false, "exit 1 when matches are found")
 	fs.StringVar(&o.format, "format", "text", "output format: text or json")
@@ -96,7 +101,13 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 		if f.Name == "min-lines" || f.Name == "m" {
 			o.minLinesSet = true
 		}
+		if f.Name == "tags" {
+			o.tagsSet = true
+		}
 	})
+	if o.tagsSet && !o.packages {
+		return o, nil, false, errors.New("--tags requires --packages")
+	}
 	if !finite(o.threshold) || o.threshold < 0 || o.threshold > 1 {
 		return o, nil, false, errors.New("--threshold must be finite and between 0 and 1")
 	}

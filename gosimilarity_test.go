@@ -219,6 +219,7 @@ func TestCLIOptions(t *testing.T) {
 		{"--min-lines", "-1"}, {"--format", "yaml"}, {"--unknown"},
 		{"--exclude", "["}, {"--threshold"}, {"--no-size-penalty"},
 		{"--types", "--no-types"}, {"--no-types", "--types"},
+		{"--tags", "integration"}, {"--tags="}, {"--packages=false", "--tags", "integration"},
 	} {
 		var out, stderr bytes.Buffer
 		err := Run(context.Background(), args, &out, &stderr)

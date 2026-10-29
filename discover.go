@@ -137,6 +137,9 @@ func gitRoot(dir string) string {
 }
 
 func discover(ctx context.Context, paths []string, cwd string, opts options, result *report) []inputFile {
+	if opts.packages {
+		return discoverPackages(ctx, paths, cwd, opts, result)
+	}
 	files := make(map[string]bool)
 	add := func(name string, direct bool) {
 		if previous, ok := files[name]; !ok || direct {
