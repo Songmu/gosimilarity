@@ -270,3 +270,14 @@ func TestPackageDiscoveryRequiredMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestPackageErrorPosition(t *testing.T) {
+	setupPackageModule(t)
+	writeFile(t, "base.go", "package fixture\ntype Base int")
+	writeFile(t, "broken_test.go", "package fixture\nimport (\nvar\n")
+	r, code, stderr := runJSON(t, "--packages", "--types", "--exclude=broken_test.go")
+	if code != 2 || r.Status != "incomplete" || !reflect.DeepEqual(declarationFiles(r), []string{"base.go"}) ||
+		!strings.Contains(stderr, "broken_test.go:3:1") {
+		t.Fatalf("package error lost its location: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}

@@ -58,7 +58,7 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			CgoFiles     []string
 			TestGoFiles  []string
 			XTestGoFiles []string
-			Error        *struct{ Err string }
+			Error        *struct{ Pos, Err string }
 		}
 		if err := dec.Decode(&pkg); err == io.EOF {
 			break
@@ -92,7 +92,11 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 			}
 		}
 		if pkg.Error != nil {
-			result.diagnose("error", "packages", "", "", pkg.ImportPath+": "+pkg.Error.Err)
+			message := pkg.Error.Err
+			if pkg.Error.Pos != "" {
+				message = pkg.Error.Pos + ": " + message
+			}
+			result.diagnose("error", "packages", "", "", pkg.ImportPath+": "+message)
 		}
 		if pkg.Dir == "" {
 			continue
