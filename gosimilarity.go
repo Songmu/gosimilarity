@@ -64,6 +64,9 @@ type floatValue float64
 func (f *floatValue) Set(s string) error {
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
+		if errors.Is(err, strconv.ErrRange) {
+			return errors.New("value out of range")
+		}
 		return errors.New("parse error")
 	}
 	*f = floatValue(v)

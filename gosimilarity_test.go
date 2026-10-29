@@ -233,6 +233,18 @@ func TestCLIOptions(t *testing.T) {
 		if err := Run(context.Background(), []string{arg}, &out, &stderr); !errors.Is(err, flag.ErrHelp) {
 			t.Fatal("help failed", err)
 		}
+		help := stderr.String()
+		for _, want := range []string{"-threshold, -t value", "(default 0.87)", "-rename-cost, -r value", "(default 0.3)", "-version, -V"} {
+			if strings.Count(help, want) != 1 {
+				t.Errorf("%s help: want exactly one %q in:\n%s", arg, want, help)
+			}
+		}
+	}
+	{
+		var out, stderr bytes.Buffer
+		if err := Run(context.Background(), []string{"--threshold", "1e400"}, &out, &stderr); err == nil || !strings.Contains(stderr.String(), "value out of range") {
+			t.Errorf("expected out of range error, got %v: %s", err, stderr.String())
+		}
 	}
 	for _, arg := range []string{"-V", "--version"} {
 		var out, stderr bytes.Buffer
