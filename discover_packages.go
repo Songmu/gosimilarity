@@ -35,6 +35,9 @@ func discoverPackages(ctx context.Context, patterns []string, cwd string, opts o
 	cmd.Stderr = &stderr
 	data, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		message := fmt.Sprintf("go list failed: %v", err)
 		if detail := strings.TrimSpace(stderr.String()); detail != "" {
 			message += ": " + detail

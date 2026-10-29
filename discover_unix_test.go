@@ -5,6 +5,7 @@ package gosimilarity
 import (
 	"context"
 	"errors"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -39,5 +40,8 @@ func TestPackageDiscoveryCancellation(t *testing.T) {
 	inputs := discoverPackages(ctx, []string{"."}, ".", options{packages: true}, r)
 	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || r.Status != "incomplete" || len(inputs) != 0 {
 		t.Fatalf("blocked go list was not canceled: context=%v report=%+v inputs=%v", ctx.Err(), r, inputs)
+	}
+	if len(r.Diagnostics) != 1 || !strings.Contains(r.Diagnostics[0].Message, context.DeadlineExceeded.Error()) {
+		t.Fatalf("cancellation reason missing: diagnostics=%+v", r.Diagnostics)
 	}
 }

@@ -190,9 +190,13 @@ func TestPackagePathsEndingInGo(t *testing.T) {
 			}
 		})
 	}
-	r, code, stderr := runJSON(t, "--packages", "target_windows.go", "--types")
-	if code != 2 || r.Summary.Files != 0 || !strings.Contains(stderr, "not Go file paths") {
-		t.Fatalf("file argument bypassed build constraints: code=%d stderr=%s report=%+v", code, stderr, r)
+	for _, args := range [][]string{{"target_windows.go"}, {".", "target_windows.go"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			r, code, stderr := runJSON(t, append([]string{"--packages", "--types"}, args...)...)
+			if code != 2 || r.Summary.Files != 0 || !strings.Contains(stderr, "not Go file paths") {
+				t.Fatalf("file argument bypassed build constraints: code=%d stderr=%s report=%+v", code, stderr, r)
+			}
+		})
 	}
 }
 
