@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strconv"
 	"strings"
 
 	"github.com/Songmu/flagx"
@@ -59,27 +58,6 @@ func (p *patterns) Set(v string) error {
 	return nil
 }
 
-type floatValue float64
-
-func (f *floatValue) Set(s string) error {
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		if errors.Is(err, strconv.ErrRange) {
-			return errors.New("value out of range")
-		}
-		return errors.New("parse error")
-	}
-	*f = floatValue(v)
-	return nil
-}
-
-func (f *floatValue) String() string {
-	if f == nil {
-		return "0"
-	}
-	return strconv.FormatFloat(float64(*f), 'g', -1, 64)
-}
-
 func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, error) {
 	var o options
 	var ver bool
@@ -90,9 +68,8 @@ func parseOptions(argv []string, errStream io.Writer) (options, []string, bool, 
 	fs.Usage = flagx.Usage(fs,
 		"gosimilarity [options] [files or directories...]\n       gosimilarity --packages [options] [package patterns...]",
 		"Find structurally similar Go functions and type declarations.\nWith --packages, . selects one package; ./... selects packages recursively.")
-	o.threshold, o.renameCost = 0.87, 0.3
-	flagx.Var(fs, (*floatValue)(&o.threshold), "threshold|t", "similarity threshold (`float` 0..1)")
-	flagx.Var(fs, (*floatValue)(&o.renameCost), "rename-cost|r", "positive node replacement cost (`float`)")
+	flagx.Float64Var(fs, &o.threshold, "threshold|t", 0.87, "similarity threshold (`float` 0..1)")
+	flagx.Float64Var(fs, &o.renameCost, "rename-cost|r", 0.3, "positive node replacement cost (`float`)")
 	flagx.IntVar(fs, &o.minLines, "min-lines|m", 3, "minimum function declaration lines")
 	flagx.IntVar(fs, &o.minTokens, "min-tokens", 0, "minimum normalized function tree nodes (overrides --min-lines)")
 	flagx.BoolVar(fs, &compareTypes, "types", false, "include type comparisons")
