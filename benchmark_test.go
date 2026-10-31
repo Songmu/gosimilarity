@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,48 @@ func BenchmarkRepository(b *testing.B) {
 				b.ReportMetric(float64(len(r.Pairs)), "matches/op")
 			}
 		})
+	}
+}
+
+func BenchmarkComparisonCandidates(b *testing.B) {
+	ts := newTrees()
+	small := ts.node("small")
+	large := ts.node("large", small, small, small, small, small, small, small, small, small)
+	var declarations []declaration
+	for i := range 10000 {
+		tr, file := small, "small.go"
+		if i%2 == 0 {
+			tr, file = large, "large.go"
+		}
+		declarations = append(declarations, declaration{
+			ID: fmt.Sprintf("d%d", i+1), Kind: "function", File: file, tree: tr, Nodes: tr.size,
+		})
+	}
+	for _, threshold := range []float64{.9, 1} {
+		for _, exhaustive := range []bool{true, false} {
+			b.Run(fmt.Sprintf("cross-file-%g-10000/exhaustive=%t", threshold, exhaustive), func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					r := newReport()
+					r.Declarations = slices.Clone(declarations)
+					opts := options{threshold: threshold, crossFileOnly: true}
+					if exhaustive {
+						if err := r.compareExhaustive(context.Background(), opts); err != nil {
+							b.Fatal(err)
+						}
+						r.finishComparison()
+					} else {
+						compare(context.Background(), opts, r)
+					}
+					if r.Summary.CandidatePairs != 25000000 || r.Summary.PrunedPairs != 25000000 ||
+						r.Summary.DistanceCalls != 0 || len(r.Pairs) != 0 {
+						b.Fatalf("unexpected benchmark comparison: %+v", r.Summary)
+					}
+					b.ReportMetric(float64(r.Summary.CandidatePairs), "candidates/op")
+					b.ReportMetric(float64(r.Summary.DistanceCalls), "distances/op")
+				}
+			})
+		}
 	}
 }
 
