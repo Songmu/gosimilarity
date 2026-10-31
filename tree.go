@@ -1,6 +1,8 @@
 package gosimilarity
 
 import (
+	"context"
+	"fmt"
 	"hash/maphash"
 	"math"
 )
@@ -60,46 +62,217 @@ func (ts *trees) node(label string, children ...*tree) *tree {
 	return n
 }
 
-type treePair struct{ a, b *tree }
-
-func distance(a, b *tree, rename float64) float64 {
-	memo := make(map[treePair]float64)
-	var visit func(*tree, *tree) float64
-	visit = func(a, b *tree) float64 {
-		if a == b {
-			return 0
+func distance(ctx context.Context, a, b *tree, rename float64) (float64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if a == b {
+		return 0, nil
+	}
+	// Deleting and reinserting a node costs two and preserves its children.
+	rename = min(rename, 2)
+	if a.size == b.size {
+		// At equal size, a structural change needs at least two unit edits.
+		limit := a.size
+		// Only convert ratios bounded by the node count.
+		if rename > 0 && 2/rename < float64(limit) {
+			limit = int(2 / rename)
 		}
+		changes, err := labelChanges(ctx, a, b, limit)
+		if err != nil {
+			return 0, err
+		}
+		if changes >= 0 {
+			cost := float64(changes) * rename
+			if cost <= 2 {
+				return cost, nil
+			}
+		}
+	}
+	if len(a.children) == 0 || len(b.children) == 0 {
+		if len(a.children) != 0 {
+			a, b = b, a
+		}
+		cost := rename
+		if containsLabel(b, a.label) {
+			cost = 0
+		}
+		return float64(b.size-1) + cost, nil
+	}
+	if flatTree(a) && flatTree(b) {
 		cost := 0.0
 		if a.label != b.label {
 			cost = rename
 		}
-		// With an empty child sequence, no alignment or memo table is needed.
-		if len(a.children) == 0 || len(b.children) == 0 {
-			return math.Min(float64(a.size+b.size), cost+float64(a.size+b.size-2))
+		d, err := labelDistance(ctx, a.children, b.children, rename)
+		if err != nil {
+			return 0, err
 		}
-		key := treePair{a, b}
-		if v, ok := memo[key]; ok {
-			return v
-		}
-		// Only two rows are needed for ordered child-sequence alignment.
-		prev := make([]float64, len(b.children)+1)
-		next := make([]float64, len(prev))
-		for j, c := range b.children {
-			prev[j+1] = prev[j] + float64(c.size)
-		}
-		for _, x := range a.children {
-			next[0] = prev[0] + float64(x.size)
-			for j, y := range b.children {
-				next[j+1] = math.Min(prev[j+1]+float64(x.size),
-					math.Min(next[j]+float64(y.size), prev[j]+visit(x, y)))
+		d += cost
+		// If a root maps to the other tree's leaf, no other node can map:
+		// ancestor relationships must be preserved in both directions.
+		oneMatch := float64(a.size + b.size - 2)
+		if d > oneMatch {
+			for _, child := range a.children {
+				if child.label == b.label {
+					return oneMatch, nil
+				}
 			}
-			prev, next = next, prev
+			for _, child := range b.children {
+				if child.label == a.label {
+					return oneMatch, nil
+				}
+			}
 		}
-		v := math.Min(float64(a.size+b.size), cost+prev[len(b.children)])
-		memo[key] = v
-		return v
+		return d, nil
 	}
-	return visit(a, b)
+	if x := chainNodes(a); x != nil {
+		if y := chainNodes(b); y != nil {
+			return labelDistance(ctx, x, y, rename)
+		}
+	}
+	return orderedDistance(ctx, a, b, rename)
+}
+
+// labelChanges returns -1 for differing shapes or more than limit changes.
+func labelChanges(ctx context.Context, a, b *tree, limit int) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
+	if a == b {
+		return 0, nil
+	}
+	if len(a.children) != len(b.children) {
+		return -1, nil
+	}
+	changes := 0
+	if a.label != b.label {
+		changes++
+	}
+	if changes > limit {
+		return -1, nil
+	}
+	for i := range a.children {
+		n, err := labelChanges(ctx, a.children[i], b.children[i], limit-changes)
+		if err != nil || n < 0 {
+			return -1, err
+		}
+		changes += n
+	}
+	return changes, nil
+}
+
+func containsLabel(t *tree, label string) bool {
+	if t.label == label {
+		return true
+	}
+	for _, child := range t.children {
+		if containsLabel(child, label) {
+			return true
+		}
+	}
+	return false
+}
+
+func flatTree(t *tree) bool {
+	for _, child := range t.children {
+		if len(child.children) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func chainNodes(root *tree) []*tree {
+	for t := root; len(t.children) != 0; t = t.children[0] {
+		if len(t.children) != 1 {
+			return nil
+		}
+	}
+	nodes := make([]*tree, 0, root.size)
+	for t := root; ; t = t.children[0] {
+		nodes = append(nodes, t)
+		if len(t.children) == 0 {
+			return nodes
+		}
+	}
+}
+
+func treeLabelCounts(ctx context.Context, root *tree) (map[string]int, error) {
+	counts := make(map[string]int)
+	var visit func(*tree) error
+	visit = func(t *tree) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		counts[t.label]++
+		for _, child := range t.children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := visit(root); err != nil {
+		return nil, err
+	}
+	return counts, nil
+}
+
+// Ignoring tree order and ancestry gives an admissible label-count edit bound.
+func labelSimilarityUpperBound(a, b *tree, labelsA, labelsB map[string]int, rename float64) float64 {
+	common := 0
+	for label, count := range labelsA {
+		common += min(count, labelsB[label])
+	}
+	small, large := min(a.size, b.size), max(a.size, b.size)
+	lower := float64(large-small) + min(rename, 2)*float64(small-common)
+	// DP additions can round down; leave room for their accumulated rounding.
+	margin := 8 * 0x1p-52 * (float64(a.size) + float64(b.size) + 1)
+	return min(1, math.Max(0, 1-lower/float64(large))+margin)
+}
+
+// Chains and leaf sequences reduce exactly to string edit distance. Equal
+// prefixes and suffixes can be removed before allocating the two DP rows.
+func labelDistance(ctx context.Context, a, b []*tree, rename float64) (float64, error) {
+	for len(a) > 0 && len(b) > 0 && a[0].label == b[0].label {
+		a, b = a[1:], b[1:]
+	}
+	for len(a) > 0 && len(b) > 0 && a[len(a)-1].label == b[len(b)-1].label {
+		a, b = a[:len(a)-1], b[:len(b)-1]
+	}
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(b) == 0 {
+		return float64(len(a)), nil
+	}
+	if uint64(len(a)) > distanceWorkBudget/uint64(len(b)) {
+		return 0, fmt.Errorf("label edit distance for %d x %d nodes exceeds the %d-cell DP work budget",
+			len(a), len(b), distanceWorkBudget)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	prev, next := make([]float64, len(b)+1), make([]float64, len(b)+1)
+	for j := range prev {
+		prev[j] = float64(j)
+	}
+	for i, x := range a {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		next[0] = float64(i + 1)
+		for j, y := range b {
+			cost := 0.0
+			if x.label != y.label {
+				cost = rename
+			}
+			next[j+1] = min(prev[j+1]+1, next[j]+1, prev[j]+cost)
+		}
+		prev, next = next, prev
+	}
+	return prev[len(b)], nil
 }
 
 func similarity(a, b *tree, d float64) float64 {

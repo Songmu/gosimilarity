@@ -1,14 +1,15 @@
 package gosimilarity
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
 )
 
 // referenceDistance implements Zhang-Shasha ordered tree edit distance with
-// unit insertion/deletion costs. Unlike distance, deleting a node promotes its
-// children. This test-only reference deliberately favors clarity over speed.
+// unit insertion/deletion costs. This independent, unoptimized reference
+// exercises production fast paths as well as the general forest recurrence.
 func referenceDistance(a, b *tree, rename float64) float64 {
 	type orderedTree struct {
 		nodes    []*tree
@@ -94,12 +95,17 @@ func TestReferenceDistance(t *testing.T) {
 		{"delete root", ts.node("r", a), a, .3, 1},
 		{"promote siblings", ts.node("r", ts.node("w", a, b)), ts.node("r", a, b), .3, 1},
 		{"ordered siblings", ts.node("r", a, b), ts.node("r", b, a), 1, 2},
+		{"zero-cost labels retain shape edits", ts.node("r", ts.node("r", a), b), ts.node("r", a, ts.node("r", b)), 0, 2},
+		{"flat root-to-leaf mapping", ts.node("a", b), ts.node("b", a), 3, 2},
 		{"repeated interned subtree", ts.node("r", shared, shared), ts.node("r", shared), .3, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, pair := range [][2]*tree{{tt.a, tt.b}, {tt.b, tt.a}} {
 				if got := referenceDistance(pair[0], pair[1], tt.rename); math.Abs(got-tt.want) > 1e-10 {
 					t.Fatalf("reference distance = %g, want %g", got, tt.want)
+				}
+				if got := mustDistance(t, pair[0], pair[1], tt.rename); math.Abs(got-tt.want) > 1e-10 {
+					t.Fatalf("production distance = %g, want %g", got, tt.want)
 				}
 			}
 		})
@@ -110,8 +116,8 @@ func TestDistanceComparison(t *testing.T) {
 	ts := newTrees()
 	leaf := ts.node("a")
 	a, b := ts.node("r", leaf), ts.node("r", ts.node("w", leaf))
-	current, reference := distance(a, b, .3), referenceDistance(a, b, .3)
-	if math.Abs(current-1.3) > 1e-10 || reference != 1 {
+	current, reference := mustDistance(t, a, b, .3), referenceDistance(a, b, .3)
+	if current != 1 || reference != 1 {
 		t.Fatalf("internal insertion: current = %g, reference = %g", current, reference)
 	}
 	t.Logf("internal insertion: current distance=%.2f similarity=%.4f; reference distance=%.2f similarity=%.4f",
@@ -128,9 +134,9 @@ func g(y int) { prepare(); { consume(y) }; finish() }`},
 		t.Run(tt.name, func(t *testing.T) {
 			nodes := normalizeSource(t, newTrees(), tt.source, false)
 			a, b := nodes[0], nodes[1]
-			current, reference := distance(a, b, .3), referenceDistance(a, b, .3)
-			if reference > current+1e-10 {
-				t.Fatalf("standard TED %g exceeds restricted distance %g", reference, current)
+			current, reference := mustDistance(t, a, b, .3), referenceDistance(a, b, .3)
+			if math.Abs(reference-current) > 1e-10 {
+				t.Fatalf("reference TED %g differs from production distance %g", reference, current)
 			}
 			t.Logf("nodes=%d/%d current distance=%.2f similarity=%.4f; reference distance=%.2f similarity=%.4f",
 				a.size, b.size, current, similarity(a, b, current), reference, similarity(a, b, reference))
@@ -141,33 +147,48 @@ func g(y int) { prepare(); { consume(y) }; finish() }`},
 func FuzzReferenceDistance(f *testing.F) {
 	f.Add([]byte{0, 1, 2}, []byte{1, 2, 0})
 	f.Add([]byte{2, 0, 1, 0}, []byte{0, 1})
+	// Exercise chains and branching descendants even in seed-only CI runs.
+	f.Add([]byte{4, 4, 4, 4, 4, 4, 4, 4}, []byte{5, 5, 5, 5, 5, 5, 5, 5})
+	f.Add([]byte{1, 1, 9, 1, 1, 9, 9, 1}, []byte{2, 2, 10, 2, 2, 10, 10, 2})
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		if len(a) > 12 || len(b) > 12 {
 			t.Skip()
 		}
 		ts := newTrees()
 		makeTree := func(data []byte) *tree {
-			root := ts.node("a")
+			var forest []*tree
 			for _, value := range data {
-				label := string(rune('a' + value%3))
-				switch value % 3 {
-				case 0:
-					root = ts.node(label, root)
-				case 1:
-					root = ts.node(label, root, ts.node("b"))
-				case 2:
-					root = ts.node(label, ts.node("b"), root)
-				}
+				count := min(int(value>>2)%4, len(forest))
+				start := len(forest) - count
+				children := append([]*tree(nil), forest[start:]...)
+				node := ts.node(string(rune('a'+value%4)), children...)
+				forest = append(forest[:start], node)
 			}
-			return root
+			return ts.node(string(rune('a'+len(data)%4)), forest...)
 		}
 		x, y := makeTree(a), makeTree(b)
-		got := referenceDistance(x, y, .3)
-		if got < math.Abs(float64(x.size-y.size))-1e-10 ||
-			math.Abs(got-referenceDistance(y, x, .3)) > 1e-10 ||
-			got > distance(x, y, .3)+1e-10 ||
-			(got == 0) != equalTrees(x, y) {
-			t.Fatalf("reference distance invariant violated: %g", got)
+		labelsX, err := treeLabelCounts(context.Background(), x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		labelsY, err := treeLabelCounts(context.Background(), y)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rename := range []float64{.3, 1, 3} {
+			got := referenceDistance(x, y, rename)
+			forward, reverse := mustDistance(t, x, y, rename), mustDistance(t, y, x, rename)
+			if got < math.Abs(float64(x.size-y.size))-1e-10 ||
+				math.Abs(got-referenceDistance(y, x, rename)) > 1e-10 ||
+				math.Abs(got-forward) > 1e-10 ||
+				math.Abs(got-reverse) > 1e-10 ||
+				(got == 0) != equalTrees(x, y) {
+				t.Fatalf("TED differs at rename cost %g: reference=%g forward=%g reverse=%g",
+					rename, got, forward, reverse)
+			}
+			if upper := labelSimilarityUpperBound(x, y, labelsX, labelsY, rename); upper < similarity(x, y, forward) {
+				t.Fatalf("label bound %g is below actual similarity at rename cost %g", upper, rename)
+			}
 		}
 	})
 }
@@ -196,23 +217,51 @@ func BenchmarkDistanceComparison(b *testing.B) {
 		}
 		return root
 	}
+	makeBalanced := func(changes int) *tree {
+		var build func(int, int) *tree
+		build = func(depth, offset int) *tree {
+			if depth == 0 {
+				label := fmt.Sprintf("leaf%d", offset)
+				if changes > 0 && offset == 32 || changes > 1 && offset >= 16 && offset < 16+changes-1 {
+					label = "changed"
+				}
+				return ts.node(label)
+			}
+			half := 1 << (depth - 1)
+			return ts.node("branch", build(depth-1, offset), build(depth-1, offset+half))
+		}
+		return build(6, 0)
+	}
 	for _, tt := range []struct {
 		name string
 		a, b *tree
+		want float64
 	}{
-		{"flat-32", makeFlat(32, false), makeFlat(32, true)},
-		{"flat-128", makeFlat(128, false), makeFlat(128, true)},
-		{"chain-128", makeChain(128, false), makeChain(128, true)},
+		{"flat-32", makeFlat(32, false), makeFlat(32, true), .3},
+		{"flat-128", makeFlat(128, false), makeFlat(128, true), .3},
+		{"chain-128", makeChain(128, false), makeChain(128, true), .3},
+		{"balanced-127", makeBalanced(0), makeBalanced(1), .3},
+		{"balanced-127-two-renames", makeBalanced(0), makeBalanced(2), .6},
+		{"balanced-127-seven-renames", makeBalanced(0), makeBalanced(7), 2.1},
 	} {
 		for _, algorithm := range []struct {
 			name string
-			run  func(*tree, *tree, float64) float64
-		}{{"current", distance}, {"reference", referenceDistance}} {
+			run  func(context.Context, *tree, *tree, float64) (float64, error)
+		}{
+			{"current", distance},
+			{"reference", func(_ context.Context, a, b *tree, rename float64) (float64, error) {
+				return referenceDistance(a, b, rename), nil
+			}},
+		} {
 			b.Run(tt.name+"/"+algorithm.name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					if got := algorithm.run(tt.a, tt.b, .3); math.Abs(got-.3) > 1e-10 {
-						b.Fatalf("distance = %g, want .3", got)
+					got, err := algorithm.run(context.Background(), tt.a, tt.b, .3)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if math.Abs(got-tt.want) > 1e-10 {
+						b.Fatalf("distance = %g, want %g", got, tt.want)
 					}
 				}
 			})

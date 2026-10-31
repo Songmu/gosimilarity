@@ -1,9 +1,33 @@
 package gosimilarity
 
 import (
+	"context"
 	"math"
+	"strings"
 	"testing"
 )
+
+func mustDistance(t testing.TB, a, b *tree, rename float64) float64 {
+	t.Helper()
+	d, err := distance(context.Background(), a, b, rename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestFlatDistanceWorkBudget(t *testing.T) {
+	ts := newTrees()
+	x, y := ts.node("x"), ts.node("y")
+	a, b := make([]*tree, 10001), make([]*tree, 10001)
+	for i := range a {
+		a[i], b[i] = x, y
+	}
+	_, err := distance(context.Background(), ts.node("root", a...), ts.node("root", b...), .3)
+	if err == nil || !strings.Contains(err.Error(), "DP work budget") {
+		t.Fatalf("flat-tree work budget not enforced: %v", err)
+	}
+}
 
 func TestDistance(t *testing.T) {
 	ts := newTrees()
@@ -22,10 +46,10 @@ func TestDistance(t *testing.T) {
 		{root, rename, .3, .3},
 		{root, rename, .8, .8},
 		{x, y, 10, 2},
-		{x, big, .3, float64(big.size-1) + .3},
+		{x, big, .3, float64(big.size - 1)},
 	} {
 		for _, order := range [][2]*tree{{tt.a, tt.b}, {tt.b, tt.a}} {
-			got := distance(order[0], order[1], tt.cost)
+			got := mustDistance(t, order[0], order[1], tt.cost)
 			if math.Abs(got-tt.want) > 1e-10 {
 				t.Errorf("distance = %g, want %g", got, tt.want)
 			}
@@ -39,7 +63,7 @@ func TestDistance(t *testing.T) {
 	}
 	other := newTrees()
 	copy := other.node("root", other.node("x"))
-	if !equalTrees(root, copy) || similarity(root, copy, distance(root, copy, .3)) != 1 {
+	if !equalTrees(root, copy) || similarity(root, copy, mustDistance(t, root, copy, .3)) != 1 {
 		t.Fatal("interned and ordinary equality paths disagree")
 	}
 }
@@ -76,8 +100,8 @@ func FuzzDistance(f *testing.F) {
 			return ts.node("root", children...)
 		}
 		x, y := makeTree(a), makeTree(b)
-		d := distance(x, y, .3)
-		if math.Abs(d-distance(y, x, .3)) > 1e-10 ||
+		d := mustDistance(t, x, y, .3)
+		if math.Abs(d-mustDistance(t, y, x, .3)) > 1e-10 ||
 			d < math.Abs(float64(x.size-y.size)) ||
 			(d == 0) != equalTrees(x, y) {
 			t.Fatal("distance invariant violated")

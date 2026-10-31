@@ -62,7 +62,7 @@ func TestSimilarityQualityEvaluation(t *testing.T) {
 		if len(a) != 1 || len(b) != 1 {
 			t.Fatalf("%s: expected one function per side, got %d and %d", fixture.name, len(a), len(b))
 		}
-		d := distance(a[0], b[0], opts.renameCost)
+		d := mustDistance(t, a[0], b[0], opts.renameCost)
 		score := similarity(a[0], b[0], d)
 		if !finite(score) || score < 0 || score > 1 {
 			t.Fatalf("%s: invalid score %g", fixture.name, score)

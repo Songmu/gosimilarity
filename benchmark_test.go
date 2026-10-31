@@ -101,7 +101,11 @@ func BenchmarkLargeTree(b *testing.B) {
 	c := ts.node("root", children...)
 	b.ReportAllocs()
 	for b.Loop() {
-		if got := distance(a, c, .3); got != .3 {
+		got, err := distance(context.Background(), a, c, .3)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got != .3 {
 			b.Fatalf("distance = %g", got)
 		}
 	}

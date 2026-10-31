@@ -136,6 +136,16 @@ Type comparisons retain declared names, self-references, field names, field
 types, and tags while normalizing type parameter names. Only types with the
 same syntactic kind are compared; named types are not expanded.
 
+Similarity uses ordered tree edit distance with unit node insertion/deletion
+costs and `--rename-cost` for label replacement. Inserting or deleting a parent
+node can retain its existing descendants, rather than replacing the subtree.
+Safe node-count and label-frequency bounds skip pairs that cannot meet the
+threshold before computing distance.
+General-tree DP tables are capped at 64 MiB per pair, and DP work is capped at
+100 million cell updates per pair. Exceeding either budget makes the inspection
+incomplete (exit 2); other results are retained and no approximate distance is
+substituted. DP loops also honor cancellation.
+
 Results are ranked by `similarity * (linesA + linesB) / 2`, so larger matches
 can rank ahead of smaller matches with higher similarity. Groups contain
 three or more declarations connected by matching pairs. A group does not

@@ -2,6 +2,7 @@ package gosimilarity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -165,28 +166,60 @@ func (r *report) compareExhaustive(ctx context.Context, opts options) error {
 				r.Summary.PrunedPairs++
 				continue
 			}
-			r.comparePair(i, j, &opts)
+			if err := r.comparePair(ctx, i, j, &opts); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (r *report) comparePair(i, j int, opts *options) {
+func (r *report) comparePair(ctx context.Context, i, j int, opts *options) error {
 	a, b := &r.Declarations[i], &r.Declarations[j]
 	d := 0.0
 	if a.tree != b.tree {
+		if opts.threshold > 0 && opts.renameCost > 0 {
+			for _, decl := range []*declaration{a, b} {
+				if decl.labels == nil {
+					var err error
+					decl.labels, err = treeLabelCounts(ctx, decl.tree)
+					if err != nil {
+						return err
+					}
+				}
+			}
+			upper := labelSimilarityUpperBound(a.tree, b.tree, a.labels, b.labels, opts.renameCost)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if upper < opts.threshold {
+				r.Summary.PrunedPairs++
+				return nil
+			}
+		}
 		r.Summary.DistanceCalls++
-		d = distance(a.tree, b.tree, opts.renameCost)
+		var err error
+		d, err = distance(ctx, a.tree, b.tree, opts.renameCost)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			r.diagnose("error", "compare", a.File, a.Name,
+				fmt.Sprintf("comparison between %s (%s:%d) and %s (%s:%d): %v",
+					a.Name, a.File, a.Start.Line, b.Name, b.File, b.Start.Line, err))
+			return nil
+		}
 	}
 	sim := similarity(a.tree, b.tree, d)
 	if sim < opts.threshold {
-		return
+		return nil
 	}
 	score := sim * float64(a.End.Line-a.Start.Line+b.End.Line-b.Start.Line+2) / 2
 	r.Pairs = append(r.Pairs, pair{
 		ID: fmt.Sprintf("p%d-%d", i+1, j+1), A: a.ID, B: b.ID,
 		Similarity: sim, Score: score, a: i, b: j,
 	})
+	return nil
 }
 
 func (r *report) finishComparison() {
@@ -208,6 +241,7 @@ func (r *report) finishComparison() {
 	for i := range r.Declarations {
 		r.Declarations[i].tree = nil
 		r.Declarations[i].body = ""
+		r.Declarations[i].labels = nil
 	}
 	slices.SortFunc(r.Diagnostics, func(a, b diagnostic) int {
 		if c := strings.Compare(a.File, b.File); c != 0 {

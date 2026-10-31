@@ -27,6 +27,95 @@ func TestArrayAndSliceKinds(t *testing.T) {
 	}
 }
 
+func TestNestedBlockSimilarity(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "blocks.go", `package example
+func first(x int) { prepare(); consume(x); finish() }
+func second(y int) { prepare(); { consume(y) }; finish() }
+`)
+	r, code, diagnostics := runJSON(t, "blocks.go", "--min-lines", "0")
+	if code != 0 || len(r.Pairs) != 1 {
+		t.Fatalf("nested block was not matched: code=%d pairs=%v diagnostics=%s", code, r.Pairs, diagnostics)
+	}
+	if got, want := r.Pairs[0].Similarity, 1-1.0/12; math.Abs(got-want) > 1e-10 {
+		t.Fatalf("nested block similarity = %g, want %g", got, want)
+	}
+}
+
+func TestComparisonBudgets(t *testing.T) {
+	for _, tt := range []struct {
+		name, message string
+		calls         int
+		nested        bool
+	}{
+		{"memory", "64 MiB DP memory budget", 700, false},
+		{"work", "100000000-cell DP work budget", 400, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var src strings.Builder
+			src.WriteString("package example\n")
+			for decl, name := range []string{"init", "init"} {
+				fmt.Fprintf(&src, "func %s() {\n", name)
+				for i := range tt.calls {
+					if tt.nested {
+						src.WriteString("{\n")
+					}
+					call := "work"
+					if decl == 1 && i < 7 {
+						call = "other"
+					}
+					fmt.Fprintf(&src, "%s()\n", call)
+				}
+				if tt.nested {
+					src.WriteString(strings.Repeat("}\n", tt.calls))
+				}
+				src.WriteString("}\n")
+			}
+			src.WriteString("func smallA() { work() }\nfunc smallB() { work() }\n")
+			writeFile(t, "large.go", src.String())
+			r, code, diagnostics := runJSON(t, "large.go", "--min-lines", "0")
+			if code != 2 || r.Status != "incomplete" || len(r.Diagnostics) != 1 {
+				t.Fatalf("budget failure not reported: code=%d status=%s diagnostics=%s", code, r.Status, diagnostics)
+			}
+			d := r.Diagnostics[0]
+			if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "init" ||
+				!strings.Contains(d.Message, tt.message) {
+				t.Fatalf("budget diagnostic lacks comparison context: %+v", d)
+			}
+			for _, decl := range r.Declarations[:2] {
+				location := fmt.Sprintf("init (large.go:%d)", decl.Start.Line)
+				if !strings.Contains(d.Message, location) {
+					t.Fatalf("budget diagnostic lacks declaration location %s: %+v", location, d)
+				}
+			}
+			if tt.nested {
+				_, estimate, ok := strings.Cut(d.Message, " requires ")
+				var workX, workY uint64
+				n, err := fmt.Sscanf(estimate, "%d x %d cell updates", &workX, &workY)
+				if !ok || err != nil || n != 2 || workY == 0 || workX <= distanceWorkBudget/workY {
+					t.Fatalf("budget diagnostic lacks the over-budget work estimate: %+v", d)
+				}
+			}
+			if len(r.Pairs) != 1 || r.Pairs[0].A != "d3" || r.Pairs[0].B != "d4" ||
+				r.Pairs[0].Similarity != 1 {
+				t.Fatalf("budget failure lost unrelated matches or reported an approximate match: %+v", r.Pairs)
+			}
+			for _, shortcut := range []struct {
+				changes int
+				rename  string
+			}{{1, "0.3"}, {2, "0.3"}, {6, "0.3"}, {7, "0.2"}, {7, "1e-320"}} {
+				writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 7-shortcut.changes))
+				r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0", "--rename-cost", shortcut.rename)
+				if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
+					t.Fatalf("budget rejected an exact %d-label shortcut (cost %s): code=%d status=%s pairs=%v diagnostics=%s",
+						shortcut.changes, shortcut.rename, code, r.Status, r.Pairs, diagnostics)
+				}
+			}
+		})
+	}
+}
+
 func TestCompareExactPruning(t *testing.T) {
 	ts := newTrees()
 	same, different := ts.node("same"), ts.node("different")
@@ -43,6 +132,42 @@ func TestCompareExactPruning(t *testing.T) {
 	}
 	if len(r.Pairs) != 1 || r.Pairs[0].ID != "p1-2" || r.Pairs[0].Similarity != 1 {
 		t.Fatalf("unexpected exact matches: %+v", r.Pairs)
+	}
+}
+
+func TestCompareLabelPruning(t *testing.T) {
+	for _, calls := range []int{2, 700} {
+		t.Run(fmt.Sprint(calls), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			src := "package example\nfunc calls() {\n" + strings.Repeat("work()\n", calls) +
+				"}\nfunc increments() {\n" + strings.Repeat("x++\n", calls*3/2) + "}\n"
+			writeFile(t, "different.go", src)
+			r, code, diagnostics := runJSON(t, "different.go", "--min-lines", "0")
+			if code != 0 || r.Status != "complete" || len(r.Declarations) != 2 ||
+				r.Declarations[0].Nodes != r.Declarations[1].Nodes || len(r.Pairs) != 0 ||
+				r.Summary.CandidatePairs != 1 || r.Summary.PrunedPairs != 1 || r.Summary.DistanceCalls != 0 {
+				t.Fatalf("provably dissimilar pair entered DP: code=%d report=%+v diagnostics=%s", code, r, diagnostics)
+			}
+		})
+	}
+}
+
+func TestCompareLabelBoundRounding(t *testing.T) {
+	ts := newTrees()
+	a, b := make([]*tree, 20), make([]*tree, 20)
+	for i := range a {
+		a[i], b[i] = ts.node("x"), ts.node("y")
+	}
+	x, y := ts.node("root", a...), ts.node("root", b...)
+	threshold := similarity(x, y, mustDistance(t, x, y, .3))
+	r := newReport()
+	r.Declarations = []declaration{
+		{ID: "d1", Kind: "function", tree: x, Nodes: x.size},
+		{ID: "d2", Kind: "function", tree: y, Nodes: y.size},
+	}
+	compare(context.Background(), options{threshold: threshold, renameCost: .3}, r)
+	if r.Status != "complete" || len(r.Pairs) != 1 || r.Pairs[0].Similarity != threshold {
+		t.Fatalf("label bound pruned a threshold-boundary match: %+v", r)
 	}
 }
 
@@ -110,7 +235,7 @@ func exhaustiveComparison(opts options, declarations []declaration) *report {
 				r.Summary.PrunedPairs++
 				continue
 			}
-			r.comparePair(i, j, &opts)
+			r.comparePair(context.Background(), i, j, &opts)
 		}
 	}
 	r.finishComparison()
@@ -225,6 +350,54 @@ func (c *cancelComparisonContext) Err() error {
 		c.cancel()
 	}
 	return c.Context.Err()
+}
+
+func TestCompareCanceledDuringDistance(t *testing.T) {
+	ts := newTrees()
+	x, y := ts.node("x"), ts.node("y")
+	flat := func(leaf *tree) *tree {
+		children := make([]*tree, 32)
+		for i := range children {
+			children[i] = leaf
+		}
+		return ts.node("root", children...)
+	}
+	chain := func(leaf *tree) *tree {
+		root := leaf
+		for range 32 {
+			root = ts.node(leaf.label, root)
+		}
+		return root
+	}
+	general := func(leaf *tree) *tree {
+		branch := ts.node("branch", leaf, leaf)
+		return ts.node("root", branch, branch)
+	}
+	for _, tt := range []struct {
+		name string
+		a, b *tree
+		opts options
+	}{
+		{"flat", flat(x), flat(y), options{renameCost: 2}},
+		{"chain", chain(x), chain(y), options{renameCost: 2}},
+		{"general-filtered", general(x), general(y), options{filterFunction: "F", renameCost: 2}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			counted := &cancelComparisonContext{Context: ctx, cancel: cancel, checks: 30}
+			r := newReport()
+			r.Declarations = []declaration{
+				{ID: "d1", Kind: "function", Name: "F1", tree: tt.a, Nodes: tt.a.size},
+				{ID: "d2", Kind: "function", Name: "F2", tree: tt.b, Nodes: tt.b.size},
+			}
+			compare(counted, tt.opts, r)
+			if r.Status != "incomplete" || len(r.Pairs) != 0 || len(r.Diagnostics) != 1 ||
+				r.Diagnostics[0].Message != context.Canceled.Error() || r.Summary.DistanceCalls != 1 {
+				t.Fatalf("distance cancellation not propagated once: %+v", r)
+			}
+		})
+	}
 }
 
 func TestCompareCanceledDuringEnumeration(t *testing.T) {
