@@ -145,6 +145,13 @@ All eligible pairs are considered and all matches are reported; there is no
 hidden result limit. A text display of `100.00%` is reserved for identical
 normalized syntax. JSON similarity values are not rounded.
 
+Without name/body filters, exact matching (`--threshold 1`) enumerates only
+shared normalized-tree groups; other thresholds use sorted node counts to
+skip pairs whose similarity upper bound is too low. Eligible-candidate counts
+still include these pruned pairs. Name/body filters retain exhaustive
+enumeration, and reporting quadratically many matches still takes quadratic
+work; no results are capped.
+
 ## JSON output
 
 `--format json` writes exactly one JSON document to stdout. Warnings and

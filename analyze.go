@@ -122,17 +122,27 @@ func typeKind(expr ast.Expr) string {
 }
 
 func compare(ctx context.Context, opts options, r *report) {
-pairs:
+	var err error
+	if opts.filterFunction != "" || opts.filterBody != "" {
+		err = r.compareExhaustive(ctx, opts)
+	} else {
+		err = r.compareCandidates(ctx, opts)
+	}
+	if err != nil {
+		r.diagnose("error", "compare", "", "", err.Error())
+	}
+	r.finishComparison()
+}
+
+func (r *report) compareExhaustive(ctx context.Context, opts options) error {
 	for i := range r.Declarations {
 		a := &r.Declarations[i]
 		if ctx.Err() != nil {
-			r.diagnose("error", "compare", "", "", ctx.Err().Error())
-			break
+			return ctx.Err()
 		}
 		for j := i + 1; j < len(r.Declarations); j++ {
 			if j%1024 == 0 && ctx.Err() != nil {
-				r.diagnose("error", "compare", "", "", ctx.Err().Error())
-				break pairs
+				return ctx.Err()
 			}
 			b := &r.Declarations[j]
 			if a.Kind != b.Kind || (a.Kind == "type" && a.TypeKind != b.TypeKind) ||
@@ -158,7 +168,7 @@ pairs:
 			r.comparePair(i, j, &opts)
 		}
 	}
-	r.finishComparison()
+	return nil
 }
 
 func (r *report) comparePair(i, j int, opts *options) {

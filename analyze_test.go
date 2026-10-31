@@ -2,7 +2,11 @@ package gosimilarity
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -65,13 +69,171 @@ func TestCompareRanking(t *testing.T) {
 }
 
 func TestCompareCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	for _, opts := range []options{{}, {threshold: 1}, {filterFunction: "F"}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r := newReport()
+		r.Declarations = []declaration{{ID: "d1", Kind: "function"}, {ID: "d2", Kind: "function"}}
+		compare(ctx, opts, r)
+		if r.Status != "incomplete" || r.Summary.CandidatePairs != 0 || len(r.Pairs) != 0 ||
+			len(r.Diagnostics) != 1 || r.Diagnostics[0].Stage != "compare" {
+			t.Fatalf("canceled comparison (%+v): %+v", opts, r)
+		}
+	}
+}
+
+// Keep eligibility, pruning and accounting exhaustive so this also detects
+// candidates lost by an index, not just differences in the reported matches.
+func exhaustiveComparison(opts options, declarations []declaration) *report {
 	r := newReport()
-	r.Declarations = []declaration{{ID: "d1", Kind: "function"}, {ID: "d2", Kind: "function"}}
-	compare(ctx, options{}, r)
-	if r.Status != "incomplete" || r.Summary.CandidatePairs != 0 || len(r.Pairs) != 0 ||
-		len(r.Diagnostics) != 1 || r.Diagnostics[0].Stage != "compare" {
-		t.Fatalf("canceled comparison: %+v", r)
+	r.Declarations = slices.Clone(declarations)
+	for i, a := range declarations {
+		for j := i + 1; j < len(declarations); j++ {
+			b := declarations[j]
+			if a.Kind != b.Kind || (a.Kind == "type" && a.TypeKind != b.TypeKind) ||
+				(opts.crossFileOnly && a.File == b.File) {
+				continue
+			}
+			if a.Kind == "function" &&
+				((!strings.Contains(a.Name, opts.filterFunction) && !strings.Contains(b.Name, opts.filterFunction)) ||
+					(!strings.Contains(a.body, opts.filterBody) && !strings.Contains(b.body, opts.filterBody))) {
+				continue
+			}
+			r.Summary.CandidatePairs++
+			if a.Kind == "function" {
+				r.Summary.FunctionCandidates++
+			} else {
+				r.Summary.TypeCandidates++
+			}
+			if similarityUpperBound(a.Nodes, b.Nodes) < opts.threshold ||
+				(opts.threshold == 1 && a.tree != b.tree) {
+				r.Summary.PrunedPairs++
+				continue
+			}
+			r.comparePair(i, j, &opts)
+		}
+	}
+	r.finishComparison()
+	return r
+}
+
+func TestCompareCandidateEquivalence(t *testing.T) {
+	ts := newTrees()
+	leaf := ts.node("leaf")
+	treeOfSize := func(size int, label string) *tree {
+		children := make([]*tree, size-1)
+		for i := range children {
+			children[i] = leaf
+		}
+		return ts.node(label, children...)
+	}
+	var declarations []declaration
+	// Deliberately interleave kinds, sizes, files and equal trees. Size 9/10
+	// straddles .9; size 1/10 exposes rounding in the size-ratio formula.
+	for i := range 36 {
+		size := []int{10, 1, 9, 2, 20, 10}[i%6]
+		tr := treeOfSize(size, fmt.Sprintf("root%d", i%3))
+		d := declaration{
+			ID: fmt.Sprintf("d%d", i+1), Kind: "function",
+			Name:  []string{"Target", "Other", "TargetOther"}[i%3],
+			body:  []string{"plain", "needle", "plain"}[i%3],
+			File:  []string{"c.go", "a.go", "b.go", "a.go", "c.go"}[i%5],
+			Start: position{Line: 1}, End: position{Line: i%7 + 2},
+			tree: tr, Nodes: tr.size,
+		}
+		if i%4 == 0 {
+			d.Kind = "type"
+			d.TypeKind = []string{"struct", "slice", "array"}[(i/4)%3]
+		}
+		declarations = append(declarations, d)
+	}
+	for _, threshold := range []float64{
+		0, similarityUpperBound(1, 10), math.Nextafter(.1, 0), .1, .87, math.Nextafter(.9, 0),
+		.9, math.Nextafter(.9, 1), math.Nextafter(1, 0), 1,
+	} {
+		for _, crossFile := range []bool{false, true} {
+			for _, filters := range [][2]string{{}, {"Target", ""}, {"", "needle"}, {"Target", "needle"}, {"missing", "needle"}} {
+				for _, renameCost := range []float64{0, .3, 1} {
+					name := fmt.Sprintf("%g/cross=%t/filters=%q/rename=%g", threshold, crossFile, filters, renameCost)
+					t.Run(name, func(t *testing.T) {
+						opts := options{
+							threshold: threshold, crossFileOnly: crossFile, renameCost: renameCost,
+							filterFunction: filters[0], filterBody: filters[1],
+						}
+						want := exhaustiveComparison(opts, declarations)
+						got := newReport()
+						got.Declarations = slices.Clone(declarations)
+						compare(context.Background(), opts, got)
+						if !reflect.DeepEqual(got, want) {
+							t.Fatalf("comparison differs from exhaustive loop:\ngot summary: %+v\nwant summary: %+v\ngot pairs: %+v\nwant pairs: %+v",
+								got.Summary, want.Summary, got.Pairs, want.Pairs)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+type cancelComparisonContext struct {
+	context.Context
+	cancel func()
+	checks int
+}
+
+func (c *cancelComparisonContext) Err() error {
+	c.checks--
+	if c.checks == 0 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestCompareCanceledDuringEnumeration(t *testing.T) {
+	const n = 120
+	for _, threshold := range []float64{.9, 1} {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		checks := n + 3
+		if threshold == 1 {
+			checks += n // Exact matching also builds the interned-tree groups.
+		}
+		counted := &cancelComparisonContext{Context: ctx, cancel: cancel, checks: checks}
+		ts := newTrees()
+		tr := ts.node("same")
+		r := newReport()
+		for i := range n {
+			r.Declarations = append(r.Declarations, declaration{
+				ID: fmt.Sprintf("d%d", i+1), Kind: "function", tree: tr, Nodes: tr.size,
+			})
+		}
+		compare(counted, options{threshold: threshold}, r)
+		if r.Status != "incomplete" || len(r.Diagnostics) != 1 || r.Diagnostics[0].Stage != "compare" ||
+			len(r.Pairs) == 0 || len(r.Pairs) >= n*(n-1)/2 {
+			t.Fatalf("comparison did not stop during enumeration (threshold %g): %+v", threshold, r.Summary)
+		}
+		if r.Summary.CandidatePairs != len(r.Pairs) || r.Summary.PrunedPairs != 0 || r.Summary.DistanceCalls != 0 {
+			t.Fatalf("cancellation changed counter meanings: %+v", r.Summary)
+		}
+	}
+}
+
+func TestCompareFiltersAcrossSides(t *testing.T) {
+	ts := newTrees()
+	tr := ts.node("same")
+	declarations := []declaration{
+		{ID: "d1", Kind: "function", Name: "Target", body: "plain", File: "a.go", tree: tr, Nodes: tr.size},
+		{ID: "d2", Kind: "function", Name: "Other", body: "needle", File: "b.go", tree: tr, Nodes: tr.size},
+		{ID: "d3", Kind: "function", Name: "Other", body: "plain", File: "c.go", tree: tr, Nodes: tr.size},
+	}
+	for _, threshold := range []float64{0, .9, 1} {
+		r := newReport()
+		r.Declarations = slices.Clone(declarations)
+		compare(context.Background(), options{
+			threshold: threshold, crossFileOnly: true, filterFunction: "Target", filterBody: "needle",
+		}, r)
+		if r.Summary.CandidatePairs != 1 || len(r.Pairs) != 1 || r.Pairs[0].ID != "p1-2" {
+			t.Fatalf("filters must be allowed on opposite sides: %+v", r)
+		}
 	}
 }
