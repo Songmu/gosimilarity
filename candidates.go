@@ -53,8 +53,14 @@ func (r *report) addCandidates(kind string, n int) {
 }
 
 func (r *report) eligiblePairCount(indices []int, crossFileOnly bool) int {
-	n := len(indices)
-	count := n * (n - 1) / 2
+	n, m := len(indices), len(indices)-1
+	// Divide first so the intermediate product fits whenever the result does.
+	if n%2 == 0 {
+		n /= 2
+	} else {
+		m /= 2
+	}
+	count := n * m
 	if crossFileOnly {
 		files := make(map[string]int)
 		for _, i := range indices {

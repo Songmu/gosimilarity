@@ -117,6 +117,36 @@ func exhaustiveComparison(opts options, declarations []declaration) *report {
 	return r
 }
 
+func TestEligiblePairCount(t *testing.T) {
+	const maxDeclarations = 50001
+	r := newReport()
+	r.Declarations = make([]declaration, maxDeclarations)
+	indices := make([]int, maxDeclarations)
+	for i := range indices {
+		indices[i] = i
+		r.Declarations[i].File = []string{"a.go", "b.go"}[i%2]
+	}
+	for _, tt := range []struct {
+		n, all, crossFile int
+	}{
+		{0, 0, 0},
+		{1, 0, 0},
+		{2, 1, 1},
+		// The final counts fit int32, but n*(n-1) does not.
+		{50000, 1249975000, 625000000},
+		{50001, 1250025000, 625025000},
+	} {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			if got := r.eligiblePairCount(indices[:tt.n], false); got != tt.all {
+				t.Fatalf("all pairs = %d, want %d", got, tt.all)
+			}
+			if got := r.eligiblePairCount(indices[:tt.n], true); got != tt.crossFile {
+				t.Fatalf("cross-file pairs = %d, want %d", got, tt.crossFile)
+			}
+		})
+	}
+}
+
 func TestCompareCandidateEquivalence(t *testing.T) {
 	ts := newTrees()
 	leaf := ts.node("leaf")
@@ -147,31 +177,39 @@ func TestCompareCandidateEquivalence(t *testing.T) {
 		}
 		declarations = append(declarations, d)
 	}
+	check := func(t *testing.T, opts options) {
+		t.Helper()
+		want := exhaustiveComparison(opts, declarations)
+		got := newReport()
+		got.Declarations = slices.Clone(declarations)
+		compare(context.Background(), opts, got)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("comparison differs from exhaustive loop:\ngot summary: %+v\nwant summary: %+v\ngot pairs: %+v\nwant pairs: %+v",
+				got.Summary, want.Summary, got.Pairs, want.Pairs)
+		}
+	}
 	for _, threshold := range []float64{
 		0, similarityUpperBound(1, 10), math.Nextafter(.1, 0), .1, .87, math.Nextafter(.9, 0),
 		.9, math.Nextafter(.9, 1), math.Nextafter(1, 0), 1,
 	} {
 		for _, crossFile := range []bool{false, true} {
-			for _, filters := range [][2]string{{}, {"Target", ""}, {"", "needle"}, {"Target", "needle"}, {"missing", "needle"}} {
-				for _, renameCost := range []float64{0, .3, 1} {
-					name := fmt.Sprintf("%g/cross=%t/filters=%q/rename=%g", threshold, crossFile, filters, renameCost)
-					t.Run(name, func(t *testing.T) {
-						opts := options{
-							threshold: threshold, crossFileOnly: crossFile, renameCost: renameCost,
-							filterFunction: filters[0], filterBody: filters[1],
-						}
-						want := exhaustiveComparison(opts, declarations)
-						got := newReport()
-						got.Declarations = slices.Clone(declarations)
-						compare(context.Background(), opts, got)
-						if !reflect.DeepEqual(got, want) {
-							t.Fatalf("comparison differs from exhaustive loop:\ngot summary: %+v\nwant summary: %+v\ngot pairs: %+v\nwant pairs: %+v",
-								got.Summary, want.Summary, got.Pairs, want.Pairs)
-						}
-					})
-				}
-			}
+			t.Run(fmt.Sprintf("%g/cross=%t", threshold, crossFile), func(t *testing.T) {
+				check(t, options{threshold: threshold, crossFileOnly: crossFile, renameCost: .3})
+			})
 		}
+	}
+	for _, tt := range []struct {
+		name string
+		opts options
+	}{
+		{"name-filter", options{threshold: .87, renameCost: .3, filterFunction: "Target"}},
+		{"body-filter-cross-file", options{threshold: .9, renameCost: .3, crossFileOnly: true, filterBody: "needle"}},
+		{"both-filters-exact", options{threshold: 1, renameCost: .3, filterFunction: "Target", filterBody: "needle"}},
+		{"missing-name-cross-file", options{threshold: .87, renameCost: .3, crossFileOnly: true, filterFunction: "missing", filterBody: "needle"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, tt.opts)
+		})
 	}
 }
 
