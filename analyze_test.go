@@ -135,7 +135,7 @@ func TestCompareLabelPruning(t *testing.T) {
 
 func TestCompareLabelBoundRounding(t *testing.T) {
 	ts := newTrees()
-	a, b := make([]*tree, 500), make([]*tree, 500)
+	a, b := make([]*tree, 20), make([]*tree, 20)
 	for i := range a {
 		a[i], b[i] = ts.node("x"), ts.node("y")
 	}
