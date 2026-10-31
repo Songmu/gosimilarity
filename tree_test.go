@@ -22,7 +22,7 @@ func TestDistance(t *testing.T) {
 		{root, rename, .3, .3},
 		{root, rename, .8, .8},
 		{x, y, 10, 2},
-		{x, big, .3, float64(big.size-1) + .3},
+		{x, big, .3, float64(big.size - 1)},
 	} {
 		for _, order := range [][2]*tree{{tt.a, tt.b}, {tt.b, tt.a}} {
 			got := distance(order[0], order[1], tt.cost)

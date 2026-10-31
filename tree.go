@@ -60,46 +60,150 @@ func (ts *trees) node(label string, children ...*tree) *tree {
 	return n
 }
 
-type treePair struct{ a, b *tree }
-
 func distance(a, b *tree, rename float64) float64 {
-	memo := make(map[treePair]float64)
-	var visit func(*tree, *tree) float64
-	visit = func(a, b *tree) float64 {
-		if a == b {
+	if a == b {
+		return 0
+	}
+	// Deleting and reinserting a node costs two and preserves its children.
+	rename = min(rename, 2)
+	if a.size == b.size {
+		// At equal size, a structural change needs at least two unit edits.
+		switch labelChanges(a, b) {
+		case 0:
 			return 0
+		case 1:
+			return rename
 		}
+	}
+	if len(a.children) == 0 || len(b.children) == 0 {
+		if len(a.children) != 0 {
+			a, b = b, a
+		}
+		cost := rename
+		if containsLabel(b, a.label) {
+			cost = 0
+		}
+		return float64(b.size-1) + cost
+	}
+	if flatTree(a) && flatTree(b) {
 		cost := 0.0
 		if a.label != b.label {
 			cost = rename
 		}
-		// With an empty child sequence, no alignment or memo table is needed.
-		if len(a.children) == 0 || len(b.children) == 0 {
-			return math.Min(float64(a.size+b.size), cost+float64(a.size+b.size-2))
-		}
-		key := treePair{a, b}
-		if v, ok := memo[key]; ok {
-			return v
-		}
-		// Only two rows are needed for ordered child-sequence alignment.
-		prev := make([]float64, len(b.children)+1)
-		next := make([]float64, len(prev))
-		for j, c := range b.children {
-			prev[j+1] = prev[j] + float64(c.size)
-		}
-		for _, x := range a.children {
-			next[0] = prev[0] + float64(x.size)
-			for j, y := range b.children {
-				next[j+1] = math.Min(prev[j+1]+float64(x.size),
-					math.Min(next[j]+float64(y.size), prev[j]+visit(x, y)))
+		d := cost + labelDistance(a.children, b.children, rename)
+		// If a root maps to the other tree's leaf, no other node can map:
+		// ancestor relationships must be preserved in both directions.
+		oneMatch := float64(a.size + b.size - 2)
+		if d > oneMatch {
+			for _, child := range a.children {
+				if child.label == b.label {
+					return oneMatch
+				}
 			}
-			prev, next = next, prev
+			for _, child := range b.children {
+				if child.label == a.label {
+					return oneMatch
+				}
+			}
 		}
-		v := math.Min(float64(a.size+b.size), cost+prev[len(b.children)])
-		memo[key] = v
-		return v
+		return d
 	}
-	return visit(a, b)
+	if x := chainNodes(a); x != nil {
+		if y := chainNodes(b); y != nil {
+			return labelDistance(x, y, rename)
+		}
+	}
+	return orderedDistance(a, b, rename)
+}
+
+// labelChanges stops at two; differing shapes also return two.
+func labelChanges(a, b *tree) int {
+	if a == b {
+		return 0
+	}
+	if len(a.children) != len(b.children) {
+		return 2
+	}
+	changes := 0
+	if a.label != b.label {
+		changes++
+	}
+	for i := range a.children {
+		changes += labelChanges(a.children[i], b.children[i])
+		if changes > 1 {
+			return 2
+		}
+	}
+	return changes
+}
+
+func containsLabel(t *tree, label string) bool {
+	if t.label == label {
+		return true
+	}
+	for _, child := range t.children {
+		if containsLabel(child, label) {
+			return true
+		}
+	}
+	return false
+}
+
+func flatTree(t *tree) bool {
+	for _, child := range t.children {
+		if len(child.children) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func chainNodes(root *tree) []*tree {
+	for t := root; len(t.children) != 0; t = t.children[0] {
+		if len(t.children) != 1 {
+			return nil
+		}
+	}
+	nodes := make([]*tree, 0, root.size)
+	for t := root; ; t = t.children[0] {
+		nodes = append(nodes, t)
+		if len(t.children) == 0 {
+			return nodes
+		}
+	}
+}
+
+// Chains and leaf sequences reduce exactly to string edit distance. Equal
+// prefixes and suffixes can be removed before allocating the two DP rows.
+func labelDistance(a, b []*tree, rename float64) float64 {
+	for len(a) > 0 && len(b) > 0 && a[0].label == b[0].label {
+		a, b = a[1:], b[1:]
+	}
+	for len(a) > 0 && len(b) > 0 && a[len(a)-1].label == b[len(b)-1].label {
+		a, b = a[:len(a)-1], b[:len(b)-1]
+	}
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(b) == 0 {
+		return float64(len(a))
+	}
+	prev, next := make([]float64, len(b)+1), make([]float64, len(b)+1)
+	for j := range prev {
+		prev[j] = float64(j)
+	}
+	for i, x := range a {
+		next[0] = float64(i + 1)
+		for j, y := range b {
+			cost := 0.0
+			if x.label != y.label {
+				cost = rename
+			}
+			next[j+1] = min(prev[j+1]+1, next[j]+1, prev[j]+cost)
+		}
+		prev, next = next, prev
+	}
+	return prev[len(b)]
 }
 
 func similarity(a, b *tree, d float64) float64 {

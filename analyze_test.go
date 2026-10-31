@@ -27,6 +27,21 @@ func TestArrayAndSliceKinds(t *testing.T) {
 	}
 }
 
+func TestNestedBlockSimilarity(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "blocks.go", `package example
+func first(x int) { prepare(); consume(x); finish() }
+func second(y int) { prepare(); { consume(y) }; finish() }
+`)
+	r, code, diagnostics := runJSON(t, "blocks.go", "--min-lines", "0")
+	if code != 0 || len(r.Pairs) != 1 {
+		t.Fatalf("nested block was not matched: code=%d pairs=%v diagnostics=%s", code, r.Pairs, diagnostics)
+	}
+	if got, want := r.Pairs[0].Similarity, 1-1.0/12; math.Abs(got-want) > 1e-10 {
+		t.Fatalf("nested block similarity = %g, want %g", got, want)
+	}
+}
+
 func TestCompareExactPruning(t *testing.T) {
 	ts := newTrees()
 	same, different := ts.node("same"), ts.node("different")
