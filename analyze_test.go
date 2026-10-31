@@ -62,7 +62,7 @@ func TestComparisonBudgets(t *testing.T) {
 						src.WriteString("{\n")
 					}
 					call := "work"
-					if decl == 1 && i < 2 {
+					if decl == 1 && i < 7 {
 						call = "other"
 					}
 					fmt.Fprintf(&src, "%s()\n", call)
@@ -101,11 +101,16 @@ func TestComparisonBudgets(t *testing.T) {
 				r.Pairs[0].Similarity != 1 {
 				t.Fatalf("budget failure lost unrelated matches or reported an approximate match: %+v", r.Pairs)
 			}
-			writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 1))
-			r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0")
-			if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
-				t.Fatalf("budget rejected an exact single-label shortcut: code=%d status=%s pairs=%v diagnostics=%s",
-					code, r.Status, r.Pairs, diagnostics)
+			for _, shortcut := range []struct {
+				changes int
+				rename  string
+			}{{1, "0.3"}, {2, "0.3"}, {6, "0.3"}, {7, "0.2"}, {7, "1e-320"}} {
+				writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 7-shortcut.changes))
+				r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0", "--rename-cost", shortcut.rename)
+				if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
+					t.Fatalf("budget rejected an exact %d-label shortcut (cost %s): code=%d status=%s pairs=%v diagnostics=%s",
+						shortcut.changes, shortcut.rename, code, r.Status, r.Pairs, diagnostics)
+				}
 			}
 		})
 	}
@@ -373,14 +378,14 @@ func TestCompareCanceledDuringDistance(t *testing.T) {
 		a, b *tree
 		opts options
 	}{
-		{"flat", flat(x), flat(y), options{}},
-		{"chain", chain(x), chain(y), options{}},
-		{"general-filtered", general(x), general(y), options{filterFunction: "F"}},
+		{"flat", flat(x), flat(y), options{renameCost: 2}},
+		{"chain", chain(x), chain(y), options{renameCost: 2}},
+		{"general-filtered", general(x), general(y), options{filterFunction: "F", renameCost: 2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			counted := &cancelComparisonContext{Context: ctx, cancel: cancel, checks: 12}
+			counted := &cancelComparisonContext{Context: ctx, cancel: cancel, checks: 30}
 			r := newReport()
 			r.Declarations = []declaration{
 				{ID: "d1", Kind: "function", Name: "F1", tree: tt.a, Nodes: tt.a.size},

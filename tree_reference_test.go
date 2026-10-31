@@ -95,6 +95,7 @@ func TestReferenceDistance(t *testing.T) {
 		{"delete root", ts.node("r", a), a, .3, 1},
 		{"promote siblings", ts.node("r", ts.node("w", a, b)), ts.node("r", a, b), .3, 1},
 		{"ordered siblings", ts.node("r", a, b), ts.node("r", b, a), 1, 2},
+		{"zero-cost labels retain shape edits", ts.node("r", ts.node("r", a), b), ts.node("r", a, ts.node("r", b)), 0, 2},
 		{"flat root-to-leaf mapping", ts.node("a", b), ts.node("b", a), 3, 2},
 		{"repeated interned subtree", ts.node("r", shared, shared), ts.node("r", shared), .3, 2},
 	} {
@@ -147,8 +148,8 @@ func FuzzReferenceDistance(f *testing.F) {
 	f.Add([]byte{0, 1, 2}, []byte{1, 2, 0})
 	f.Add([]byte{2, 0, 1, 0}, []byte{0, 1})
 	// Exercise chains and branching descendants even in seed-only CI runs.
-	f.Add([]byte{0, 4, 4}, []byte{1, 5, 5})
-	f.Add([]byte{0, 1, 8, 2}, []byte{1, 2, 9, 3})
+	f.Add([]byte{4, 4, 4, 4, 4, 4, 4, 4}, []byte{5, 5, 5, 5, 5, 5, 5, 5})
+	f.Add([]byte{1, 1, 9, 1, 1, 9, 9, 1}, []byte{2, 2, 10, 2, 2, 10, 10, 2})
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		if len(a) > 12 || len(b) > 12 {
 			t.Skip()
@@ -221,7 +222,7 @@ func BenchmarkDistanceComparison(b *testing.B) {
 		build = func(depth, offset int) *tree {
 			if depth == 0 {
 				label := fmt.Sprintf("leaf%d", offset)
-				if changes > 0 && offset == 32 || changes > 1 && offset == 16 {
+				if changes > 0 && offset == 32 || changes > 1 && offset >= 16 && offset < 16+changes-1 {
 					label = "changed"
 				}
 				return ts.node(label)
@@ -241,6 +242,7 @@ func BenchmarkDistanceComparison(b *testing.B) {
 		{"chain-128", makeChain(128, false), makeChain(128, true), .3},
 		{"balanced-127", makeBalanced(0), makeBalanced(1), .3},
 		{"balanced-127-two-renames", makeBalanced(0), makeBalanced(2), .6},
+		{"balanced-127-seven-renames", makeBalanced(0), makeBalanced(7), 2.1},
 	} {
 		for _, algorithm := range []struct {
 			name string

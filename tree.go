@@ -73,11 +73,20 @@ func distance(ctx context.Context, a, b *tree, rename float64) (float64, error) 
 	rename = min(rename, 2)
 	if a.size == b.size {
 		// At equal size, a structural change needs at least two unit edits.
-		switch labelChanges(a, b) {
-		case 0:
-			return 0, nil
-		case 1:
-			return rename, nil
+		limit := a.size
+		// Only convert ratios bounded by the node count.
+		if rename > 0 && 2/rename < float64(limit) {
+			limit = int(2 / rename)
+		}
+		changes, err := labelChanges(ctx, a, b, limit)
+		if err != nil {
+			return 0, err
+		}
+		if changes >= 0 {
+			cost := float64(changes) * rename
+			if cost <= 2 {
+				return cost, nil
+			}
 		}
 	}
 	if len(a.children) == 0 || len(b.children) == 0 {
@@ -125,25 +134,32 @@ func distance(ctx context.Context, a, b *tree, rename float64) (float64, error) 
 	return orderedDistance(ctx, a, b, rename)
 }
 
-// labelChanges stops at two; differing shapes also return two.
-func labelChanges(a, b *tree) int {
+// labelChanges returns -1 for differing shapes or more than limit changes.
+func labelChanges(ctx context.Context, a, b *tree, limit int) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
 	if a == b {
-		return 0
+		return 0, nil
 	}
 	if len(a.children) != len(b.children) {
-		return 2
+		return -1, nil
 	}
 	changes := 0
 	if a.label != b.label {
 		changes++
 	}
-	for i := range a.children {
-		changes += labelChanges(a.children[i], b.children[i])
-		if changes > 1 {
-			return 2
-		}
+	if changes > limit {
+		return -1, nil
 	}
-	return changes
+	for i := range a.children {
+		n, err := labelChanges(ctx, a.children[i], b.children[i], limit-changes)
+		if err != nil || n < 0 {
+			return -1, err
+		}
+		changes += n
+	}
+	return changes, nil
 }
 
 func containsLabel(t *tree, label string) bool {
