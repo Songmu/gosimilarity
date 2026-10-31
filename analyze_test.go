@@ -42,41 +42,58 @@ func second(y int) { prepare(); { consume(y) }; finish() }
 	}
 }
 
-func TestComparisonMemoryBudget(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var src strings.Builder
-	src.WriteString("package example\n")
-	for _, name := range []string{"largeA", "largeB"} {
-		fmt.Fprintf(&src, "func %s() {\n", name)
-		for i := range 700 {
-			call := "work"
-			if name == "largeB" && i < 2 {
-				call = "other"
+func TestComparisonBudgets(t *testing.T) {
+	for _, tt := range []struct {
+		name, message string
+		calls         int
+		nested        bool
+	}{
+		{"memory", "64 MiB DP memory budget", 700, false},
+		{"work", "100000000-cell DP work budget", 400, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var src strings.Builder
+			src.WriteString("package example\n")
+			for _, name := range []string{"largeA", "largeB"} {
+				fmt.Fprintf(&src, "func %s() {\n", name)
+				for i := range tt.calls {
+					if tt.nested {
+						src.WriteString("{\n")
+					}
+					call := "work"
+					if name == "largeB" && i < 2 {
+						call = "other"
+					}
+					fmt.Fprintf(&src, "%s()\n", call)
+				}
+				if tt.nested {
+					src.WriteString(strings.Repeat("}\n", tt.calls))
+				}
+				src.WriteString("}\n")
 			}
-			fmt.Fprintf(&src, "%s()\n", call)
-		}
-		src.WriteString("}\n")
-	}
-	src.WriteString("func smallA() { work() }\nfunc smallB() { work() }\n")
-	writeFile(t, "large.go", src.String())
-	r, code, diagnostics := runJSON(t, "large.go", "--min-lines", "0")
-	if code != 2 || r.Status != "incomplete" || len(r.Diagnostics) != 1 {
-		t.Fatalf("budget failure not reported: code=%d status=%s diagnostics=%s", code, r.Status, diagnostics)
-	}
-	d := r.Diagnostics[0]
-	if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "largeA" ||
-		!strings.Contains(d.Message, "largeB") || !strings.Contains(d.Message, "64 MiB DP memory budget") {
-		t.Fatalf("budget diagnostic lacks comparison context: %+v", d)
-	}
-	if len(r.Pairs) != 1 || r.Pairs[0].A != "d3" || r.Pairs[0].B != "d4" ||
-		r.Pairs[0].Similarity != 1 {
-		t.Fatalf("budget failure lost unrelated matches or reported an approximate match: %+v", r.Pairs)
-	}
-	writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 1))
-	r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0")
-	if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
-		t.Fatalf("budget rejected an exact single-label shortcut: code=%d status=%s pairs=%v diagnostics=%s",
-			code, r.Status, r.Pairs, diagnostics)
+			src.WriteString("func smallA() { work() }\nfunc smallB() { work() }\n")
+			writeFile(t, "large.go", src.String())
+			r, code, diagnostics := runJSON(t, "large.go", "--min-lines", "0")
+			if code != 2 || r.Status != "incomplete" || len(r.Diagnostics) != 1 {
+				t.Fatalf("budget failure not reported: code=%d status=%s diagnostics=%s", code, r.Status, diagnostics)
+			}
+			d := r.Diagnostics[0]
+			if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "largeA" ||
+				!strings.Contains(d.Message, "largeB") || !strings.Contains(d.Message, tt.message) {
+				t.Fatalf("budget diagnostic lacks comparison context: %+v", d)
+			}
+			if len(r.Pairs) != 1 || r.Pairs[0].A != "d3" || r.Pairs[0].B != "d4" ||
+				r.Pairs[0].Similarity != 1 {
+				t.Fatalf("budget failure lost unrelated matches or reported an approximate match: %+v", r.Pairs)
+			}
+			writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 1))
+			r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0")
+			if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
+				t.Fatalf("budget rejected an exact single-label shortcut: code=%d status=%s pairs=%v diagnostics=%s",
+					code, r.Status, r.Pairs, diagnostics)
+			}
+		})
 	}
 }
 
@@ -163,7 +180,7 @@ func exhaustiveComparison(opts options, declarations []declaration) *report {
 				r.Summary.PrunedPairs++
 				continue
 			}
-			r.comparePair(i, j, &opts)
+			r.comparePair(context.Background(), i, j, &opts)
 		}
 	}
 	r.finishComparison()
@@ -278,6 +295,54 @@ func (c *cancelComparisonContext) Err() error {
 		c.cancel()
 	}
 	return c.Context.Err()
+}
+
+func TestCompareCanceledDuringDistance(t *testing.T) {
+	ts := newTrees()
+	x, y := ts.node("x"), ts.node("y")
+	flat := func(leaf *tree) *tree {
+		children := make([]*tree, 32)
+		for i := range children {
+			children[i] = leaf
+		}
+		return ts.node("root", children...)
+	}
+	chain := func(leaf *tree) *tree {
+		root := leaf
+		for range 32 {
+			root = ts.node(leaf.label, root)
+		}
+		return root
+	}
+	general := func(leaf *tree) *tree {
+		branch := ts.node("branch", leaf, leaf)
+		return ts.node("root", branch, branch)
+	}
+	for _, tt := range []struct {
+		name string
+		a, b *tree
+		opts options
+	}{
+		{"flat", flat(x), flat(y), options{}},
+		{"chain", chain(x), chain(y), options{}},
+		{"general-filtered", general(x), general(y), options{filterFunction: "F"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			counted := &cancelComparisonContext{Context: ctx, cancel: cancel, checks: 12}
+			r := newReport()
+			r.Declarations = []declaration{
+				{ID: "d1", Kind: "function", Name: "F1", tree: tt.a, Nodes: tt.a.size},
+				{ID: "d2", Kind: "function", Name: "F2", tree: tt.b, Nodes: tt.b.size},
+			}
+			compare(counted, tt.opts, r)
+			if r.Status != "incomplete" || len(r.Pairs) != 0 || len(r.Diagnostics) != 1 ||
+				r.Diagnostics[0].Message != context.Canceled.Error() || r.Summary.DistanceCalls != 1 {
+				t.Fatalf("distance cancellation not propagated once: %+v", r)
+			}
+		})
+	}
 }
 
 func TestCompareCanceledDuringEnumeration(t *testing.T) {

@@ -1,8 +1,12 @@
 package gosimilarity
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 const distanceMemoryBudget = 64 << 20
+const distanceWorkBudget = 100_000_000
 
 type editNode struct {
 	tree     *tree
@@ -36,7 +40,10 @@ func postorderTree(root *tree) ([]editNode, []int) {
 // orderedDistance is Zhang-Shasha ordered tree edit distance. Postorder
 // occurrences, not interned node IDs, retain repeated subtree positions.
 // Forest edits delete one node at a time, promoting its children.
-func orderedDistance(a, b *tree, rename float64) (float64, error) {
+func orderedDistance(ctx context.Context, a, b *tree, rename float64) (float64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	const maxCells = distanceMemoryBudget / (2 * 8)
 	// Check before indexing or multiplying, including on 32-bit platforms.
 	if a.size >= maxCells || b.size >= maxCells || a.size+1 > maxCells/(b.size+1) {
@@ -45,11 +52,30 @@ func orderedDistance(a, b *tree, rename float64) (float64, error) {
 	}
 	x, rootsX := postorderTree(a)
 	y, rootsY := postorderTree(b)
+	forestLength := func(nodes []editNode, roots []int) uint64 {
+		var total uint64
+		for _, root := range roots {
+			total += uint64(root - nodes[root].leftmost + 1)
+		}
+		return total
+	}
+	workX, workY := forestLength(x, rootsX), forestLength(y, rootsY)
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	// The memory guard bounds each sum; divide to avoid overflowing their product.
+	if workX > distanceWorkBudget/workY {
+		return 0, fmt.Errorf("ordered tree edit distance for %d x %d nodes exceeds the %d-cell DP work budget",
+			a.size, b.size, distanceWorkBudget)
+	}
 	cols := len(y)
 	distances := make([]float64, len(x)*cols)
 	forest := make([]float64, len(distances))
 	for _, i := range rootsX {
 		for _, j := range rootsY {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
 			left, right := x[i].leftmost, y[j].leftmost
 			forest[(left-1)*cols+right-1] = 0
 			for row := left; row <= i; row++ {
@@ -59,6 +85,9 @@ func orderedDistance(a, b *tree, rename float64) (float64, error) {
 				forest[(left-1)*cols+col] = float64(col - right + 1)
 			}
 			for row := left; row <= i; row++ {
+				if err := ctx.Err(); err != nil {
+					return 0, err
+				}
 				for col := right; col <= j; col++ {
 					pos := row*cols + col
 					cost := min(forest[pos-cols]+1, forest[pos-1]+1)

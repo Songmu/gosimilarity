@@ -1,6 +1,8 @@
 package gosimilarity
 
 import (
+	"context"
+	"fmt"
 	"hash/maphash"
 	"math"
 )
@@ -60,7 +62,10 @@ func (ts *trees) node(label string, children ...*tree) *tree {
 	return n
 }
 
-func distance(a, b *tree, rename float64) (float64, error) {
+func distance(ctx context.Context, a, b *tree, rename float64) (float64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if a == b {
 		return 0, nil
 	}
@@ -90,7 +95,11 @@ func distance(a, b *tree, rename float64) (float64, error) {
 		if a.label != b.label {
 			cost = rename
 		}
-		d := cost + labelDistance(a.children, b.children, rename)
+		d, err := labelDistance(ctx, a.children, b.children, rename)
+		if err != nil {
+			return 0, err
+		}
+		d += cost
 		// If a root maps to the other tree's leaf, no other node can map:
 		// ancestor relationships must be preserved in both directions.
 		oneMatch := float64(a.size + b.size - 2)
@@ -110,10 +119,10 @@ func distance(a, b *tree, rename float64) (float64, error) {
 	}
 	if x := chainNodes(a); x != nil {
 		if y := chainNodes(b); y != nil {
-			return labelDistance(x, y, rename), nil
+			return labelDistance(ctx, x, y, rename)
 		}
 	}
-	return orderedDistance(a, b, rename)
+	return orderedDistance(ctx, a, b, rename)
 }
 
 // labelChanges stops at two; differing shapes also return two.
@@ -175,7 +184,7 @@ func chainNodes(root *tree) []*tree {
 
 // Chains and leaf sequences reduce exactly to string edit distance. Equal
 // prefixes and suffixes can be removed before allocating the two DP rows.
-func labelDistance(a, b []*tree, rename float64) float64 {
+func labelDistance(ctx context.Context, a, b []*tree, rename float64) (float64, error) {
 	for len(a) > 0 && len(b) > 0 && a[0].label == b[0].label {
 		a, b = a[1:], b[1:]
 	}
@@ -186,13 +195,23 @@ func labelDistance(a, b []*tree, rename float64) float64 {
 		a, b = b, a
 	}
 	if len(b) == 0 {
-		return float64(len(a))
+		return float64(len(a)), nil
+	}
+	if uint64(len(a)) > distanceWorkBudget/uint64(len(b)) {
+		return 0, fmt.Errorf("label edit distance for %d x %d nodes exceeds the %d-cell DP work budget",
+			len(a), len(b), distanceWorkBudget)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	prev, next := make([]float64, len(b)+1), make([]float64, len(b)+1)
 	for j := range prev {
 		prev[j] = float64(j)
 	}
 	for i, x := range a {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		next[0] = float64(i + 1)
 		for j, y := range b {
 			cost := 0.0
@@ -203,7 +222,7 @@ func labelDistance(a, b []*tree, rename float64) float64 {
 		}
 		prev, next = next, prev
 	}
-	return prev[len(b)]
+	return prev[len(b)], nil
 }
 
 func similarity(a, b *tree, d float64) float64 {

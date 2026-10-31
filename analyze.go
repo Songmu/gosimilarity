@@ -2,6 +2,7 @@ package gosimilarity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -165,34 +166,40 @@ func (r *report) compareExhaustive(ctx context.Context, opts options) error {
 				r.Summary.PrunedPairs++
 				continue
 			}
-			r.comparePair(i, j, &opts)
+			if err := r.comparePair(ctx, i, j, &opts); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (r *report) comparePair(i, j int, opts *options) {
+func (r *report) comparePair(ctx context.Context, i, j int, opts *options) error {
 	a, b := &r.Declarations[i], &r.Declarations[j]
 	d := 0.0
 	if a.tree != b.tree {
 		r.Summary.DistanceCalls++
 		var err error
-		d, err = distance(a.tree, b.tree, opts.renameCost)
+		d, err = distance(ctx, a.tree, b.tree, opts.renameCost)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
 			r.diagnose("error", "compare", a.File, a.Name,
 				fmt.Sprintf("comparison with %s (%s): %v", b.Name, b.File, err))
-			return
+			return nil
 		}
 	}
 	sim := similarity(a.tree, b.tree, d)
 	if sim < opts.threshold {
-		return
+		return nil
 	}
 	score := sim * float64(a.End.Line-a.Start.Line+b.End.Line-b.Start.Line+2) / 2
 	r.Pairs = append(r.Pairs, pair{
 		ID: fmt.Sprintf("p%d-%d", i+1, j+1), A: a.ID, B: b.ID,
 		Similarity: sim, Score: score, a: i, b: j,
 	})
+	return nil
 }
 
 func (r *report) finishComparison() {

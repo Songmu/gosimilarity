@@ -1,17 +1,32 @@
 package gosimilarity
 
 import (
+	"context"
 	"math"
+	"strings"
 	"testing"
 )
 
 func mustDistance(t testing.TB, a, b *tree, rename float64) float64 {
 	t.Helper()
-	d, err := distance(a, b, rename)
+	d, err := distance(context.Background(), a, b, rename)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return d
+}
+
+func TestFlatDistanceWorkBudget(t *testing.T) {
+	ts := newTrees()
+	x, y := ts.node("x"), ts.node("y")
+	a, b := make([]*tree, 10001), make([]*tree, 10001)
+	for i := range a {
+		a[i], b[i] = x, y
+	}
+	_, err := distance(context.Background(), ts.node("root", a...), ts.node("root", b...), .3)
+	if err == nil || !strings.Contains(err.Error(), "DP work budget") {
+		t.Fatalf("flat-tree work budget not enforced: %v", err)
+	}
 }
 
 func TestDistance(t *testing.T) {

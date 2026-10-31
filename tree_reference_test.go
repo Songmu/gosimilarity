@@ -1,6 +1,7 @@
 package gosimilarity
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -232,17 +233,17 @@ func BenchmarkDistanceComparison(b *testing.B) {
 	} {
 		for _, algorithm := range []struct {
 			name string
-			run  func(*tree, *tree, float64) (float64, error)
+			run  func(context.Context, *tree, *tree, float64) (float64, error)
 		}{
 			{"current", distance},
-			{"reference", func(a, b *tree, rename float64) (float64, error) {
+			{"reference", func(_ context.Context, a, b *tree, rename float64) (float64, error) {
 				return referenceDistance(a, b, rename), nil
 			}},
 		} {
 			b.Run(tt.name+"/"+algorithm.name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					got, err := algorithm.run(tt.a, tt.b, .3)
+					got, err := algorithm.run(context.Background(), tt.a, tt.b, .3)
 					if err != nil {
 						b.Fatal(err)
 					}

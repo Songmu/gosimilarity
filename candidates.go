@@ -125,7 +125,9 @@ func (r *report) compareExactCandidates(ctx context.Context, opts options, indic
 					a, b = b, a
 				}
 				r.addCandidates(kind, 1)
-				r.comparePair(a, b, &opts)
+				if err := r.comparePair(ctx, a, b, &opts); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -180,7 +182,9 @@ func (r *report) compareSizeCandidates(ctx context.Context, opts options, indice
 				left, right = right, left
 			}
 			r.addCandidates(a.Kind, 1)
-			r.comparePair(left, right, &opts)
+			if err := r.comparePair(ctx, left, right, &opts); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
