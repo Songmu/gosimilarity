@@ -8,7 +8,7 @@ runs:
     - name: Install gosimilarity
       shell: bash
       run: |
-        version="v0.0.4"
+        version="v0.0.5"
         bindir="${RUNNER_TEMP%/}/gosimilarity/bin"
 
         sh "${GITHUB_ACTION_PATH}/install.sh" \
