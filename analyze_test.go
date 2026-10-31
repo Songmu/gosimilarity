@@ -55,14 +55,14 @@ func TestComparisonBudgets(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var src strings.Builder
 			src.WriteString("package example\n")
-			for _, name := range []string{"largeA", "largeB"} {
+			for decl, name := range []string{"init", "init"} {
 				fmt.Fprintf(&src, "func %s() {\n", name)
 				for i := range tt.calls {
 					if tt.nested {
 						src.WriteString("{\n")
 					}
 					call := "work"
-					if name == "largeB" && i < 2 {
+					if decl == 1 && i < 2 {
 						call = "other"
 					}
 					fmt.Fprintf(&src, "%s()\n", call)
@@ -79,9 +79,23 @@ func TestComparisonBudgets(t *testing.T) {
 				t.Fatalf("budget failure not reported: code=%d status=%s diagnostics=%s", code, r.Status, diagnostics)
 			}
 			d := r.Diagnostics[0]
-			if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "largeA" ||
-				!strings.Contains(d.Message, "largeB") || !strings.Contains(d.Message, tt.message) {
+			if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "init" ||
+				!strings.Contains(d.Message, tt.message) {
 				t.Fatalf("budget diagnostic lacks comparison context: %+v", d)
+			}
+			for _, decl := range r.Declarations[:2] {
+				location := fmt.Sprintf("init (large.go:%d)", decl.Start.Line)
+				if !strings.Contains(d.Message, location) {
+					t.Fatalf("budget diagnostic lacks declaration location %s: %+v", location, d)
+				}
+			}
+			if tt.nested {
+				_, estimate, ok := strings.Cut(d.Message, " requires ")
+				var workX, workY uint64
+				n, err := fmt.Sscanf(estimate, "%d x %d cell updates", &workX, &workY)
+				if !ok || err != nil || n != 2 || workY == 0 || workX <= distanceWorkBudget/workY {
+					t.Fatalf("budget diagnostic lacks the over-budget work estimate: %+v", d)
+				}
 			}
 			if len(r.Pairs) != 1 || r.Pairs[0].A != "d3" || r.Pairs[0].B != "d4" ||
 				r.Pairs[0].Similarity != 1 {

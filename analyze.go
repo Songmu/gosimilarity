@@ -205,7 +205,8 @@ func (r *report) comparePair(ctx context.Context, i, j int, opts *options) error
 				return err
 			}
 			r.diagnose("error", "compare", a.File, a.Name,
-				fmt.Sprintf("comparison with %s (%s): %v", b.Name, b.File, err))
+				fmt.Sprintf("comparison between %s (%s:%d) and %s (%s:%d): %v",
+					a.Name, a.File, a.Start.Line, b.Name, b.File, b.Start.Line, err))
 			return nil
 		}
 	}

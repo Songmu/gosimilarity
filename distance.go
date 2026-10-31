@@ -65,8 +65,8 @@ func orderedDistance(ctx context.Context, a, b *tree, rename float64) (float64, 
 	}
 	// The memory guard bounds each sum; divide to avoid overflowing their product.
 	if workX > distanceWorkBudget/workY {
-		return 0, fmt.Errorf("ordered tree edit distance for %d x %d nodes exceeds the %d-cell DP work budget",
-			a.size, b.size, distanceWorkBudget)
+		return 0, fmt.Errorf("ordered tree edit distance for %d x %d nodes requires %d x %d cell updates, exceeding the %d-cell DP work budget",
+			a.size, b.size, workX, workY, distanceWorkBudget)
 	}
 	cols := len(y)
 	distances := make([]float64, len(x)*cols)
