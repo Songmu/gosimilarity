@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.0.5](https://github.com/Songmu/gosimilarity/compare/v0.0.4...v0.0.5) - 2026-10-31
+
+- Establish a provisional Go similarity quality evaluation baseline by @Songmu in https://github.com/Songmu/gosimilarity/pull/25
+- Reduce comparison enumeration with exact-tree groups and size bounds by @Songmu in https://github.com/Songmu/gosimilarity/pull/26
+- Evaluate standard ordered tree edit distance before changing scoring by @Songmu in https://github.com/Songmu/gosimilarity/pull/24
+- Compute exact ordered tree edit distance for production similarity by @Songmu in https://github.com/Songmu/gosimilarity/pull/28
+
 ## [v0.0.4](https://github.com/Songmu/gosimilarity/compare/v0.0.3...v0.0.4) - 2026-10-30
 
 - Update flagx to v0.0.2 and simplify float flags by @Songmu in https://github.com/Songmu/gosimilarity/pull/22
