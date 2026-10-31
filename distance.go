@@ -1,5 +1,9 @@
 package gosimilarity
 
+import "fmt"
+
+const distanceMemoryBudget = 64 << 20
+
 type editNode struct {
 	tree     *tree
 	leftmost int
@@ -32,7 +36,13 @@ func postorderTree(root *tree) ([]editNode, []int) {
 // orderedDistance is Zhang-Shasha ordered tree edit distance. Postorder
 // occurrences, not interned node IDs, retain repeated subtree positions.
 // Forest edits delete one node at a time, promoting its children.
-func orderedDistance(a, b *tree, rename float64) float64 {
+func orderedDistance(a, b *tree, rename float64) (float64, error) {
+	const maxCells = distanceMemoryBudget / (2 * 8)
+	// Check before indexing or multiplying, including on 32-bit platforms.
+	if a.size >= maxCells || b.size >= maxCells || a.size+1 > maxCells/(b.size+1) {
+		return 0, fmt.Errorf("ordered tree edit distance for %d x %d nodes exceeds the %d MiB DP memory budget",
+			a.size, b.size, distanceMemoryBudget>>20)
+	}
 	x, rootsX := postorderTree(a)
 	y, rootsY := postorderTree(b)
 	cols := len(y)
@@ -68,5 +78,5 @@ func orderedDistance(a, b *tree, rename float64) float64 {
 			}
 		}
 	}
-	return distances[len(distances)-1]
+	return distances[len(distances)-1], nil
 }

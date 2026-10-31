@@ -42,6 +42,44 @@ func second(y int) { prepare(); { consume(y) }; finish() }
 	}
 }
 
+func TestComparisonMemoryBudget(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var src strings.Builder
+	src.WriteString("package example\n")
+	for _, name := range []string{"largeA", "largeB"} {
+		fmt.Fprintf(&src, "func %s() {\n", name)
+		for i := range 700 {
+			call := "work"
+			if name == "largeB" && i < 2 {
+				call = "other"
+			}
+			fmt.Fprintf(&src, "%s()\n", call)
+		}
+		src.WriteString("}\n")
+	}
+	src.WriteString("func smallA() { work() }\nfunc smallB() { work() }\n")
+	writeFile(t, "large.go", src.String())
+	r, code, diagnostics := runJSON(t, "large.go", "--min-lines", "0")
+	if code != 2 || r.Status != "incomplete" || len(r.Diagnostics) != 1 {
+		t.Fatalf("budget failure not reported: code=%d status=%s diagnostics=%s", code, r.Status, diagnostics)
+	}
+	d := r.Diagnostics[0]
+	if d.Stage != "compare" || d.File != "large.go" || d.Declaration != "largeA" ||
+		!strings.Contains(d.Message, "largeB") || !strings.Contains(d.Message, "64 MiB DP memory budget") {
+		t.Fatalf("budget diagnostic lacks comparison context: %+v", d)
+	}
+	if len(r.Pairs) != 1 || r.Pairs[0].A != "d3" || r.Pairs[0].B != "d4" ||
+		r.Pairs[0].Similarity != 1 {
+		t.Fatalf("budget failure lost unrelated matches or reported an approximate match: %+v", r.Pairs)
+	}
+	writeFile(t, "large.go", strings.Replace(src.String(), "other()", "work()", 1))
+	r, code, diagnostics = runJSON(t, "large.go", "--min-lines", "0")
+	if code != 0 || r.Status != "complete" || len(r.Pairs) != 2 {
+		t.Fatalf("budget rejected an exact single-label shortcut: code=%d status=%s pairs=%v diagnostics=%s",
+			code, r.Status, r.Pairs, diagnostics)
+	}
+}
+
 func TestCompareExactPruning(t *testing.T) {
 	ts := newTrees()
 	same, different := ts.node("same"), ts.node("different")

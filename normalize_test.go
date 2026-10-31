@@ -123,7 +123,7 @@ func TestNormalization(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, b := assertNormalizedEquality(t, tt.a, tt.b, false, tt.equal)
-			if d := distance(a, b, .3); (d == 0) != tt.equal {
+			if d := mustDistance(t, a, b, .3); (d == 0) != tt.equal {
 				t.Fatalf("distance = %g, equality = %v", d, tt.equal)
 			}
 		})

@@ -176,7 +176,13 @@ func (r *report) comparePair(i, j int, opts *options) {
 	d := 0.0
 	if a.tree != b.tree {
 		r.Summary.DistanceCalls++
-		d = distance(a.tree, b.tree, opts.renameCost)
+		var err error
+		d, err = distance(a.tree, b.tree, opts.renameCost)
+		if err != nil {
+			r.diagnose("error", "compare", a.File, a.Name,
+				fmt.Sprintf("comparison with %s (%s): %v", b.Name, b.File, err))
+			return
+		}
 	}
 	sim := similarity(a.tree, b.tree, d)
 	if sim < opts.threshold {

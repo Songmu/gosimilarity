@@ -60,9 +60,9 @@ func (ts *trees) node(label string, children ...*tree) *tree {
 	return n
 }
 
-func distance(a, b *tree, rename float64) float64 {
+func distance(a, b *tree, rename float64) (float64, error) {
 	if a == b {
-		return 0
+		return 0, nil
 	}
 	// Deleting and reinserting a node costs two and preserves its children.
 	rename = min(rename, 2)
@@ -70,9 +70,9 @@ func distance(a, b *tree, rename float64) float64 {
 		// At equal size, a structural change needs at least two unit edits.
 		switch labelChanges(a, b) {
 		case 0:
-			return 0
+			return 0, nil
 		case 1:
-			return rename
+			return rename, nil
 		}
 	}
 	if len(a.children) == 0 || len(b.children) == 0 {
@@ -83,7 +83,7 @@ func distance(a, b *tree, rename float64) float64 {
 		if containsLabel(b, a.label) {
 			cost = 0
 		}
-		return float64(b.size-1) + cost
+		return float64(b.size-1) + cost, nil
 	}
 	if flatTree(a) && flatTree(b) {
 		cost := 0.0
@@ -97,20 +97,20 @@ func distance(a, b *tree, rename float64) float64 {
 		if d > oneMatch {
 			for _, child := range a.children {
 				if child.label == b.label {
-					return oneMatch
+					return oneMatch, nil
 				}
 			}
 			for _, child := range b.children {
 				if child.label == a.label {
-					return oneMatch
+					return oneMatch, nil
 				}
 			}
 		}
-		return d
+		return d, nil
 	}
 	if x := chainNodes(a); x != nil {
 		if y := chainNodes(b); y != nil {
-			return labelDistance(x, y, rename)
+			return labelDistance(x, y, rename), nil
 		}
 	}
 	return orderedDistance(a, b, rename)

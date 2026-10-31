@@ -102,7 +102,7 @@ func TestReferenceDistance(t *testing.T) {
 				if got := referenceDistance(pair[0], pair[1], tt.rename); math.Abs(got-tt.want) > 1e-10 {
 					t.Fatalf("reference distance = %g, want %g", got, tt.want)
 				}
-				if got := distance(pair[0], pair[1], tt.rename); math.Abs(got-tt.want) > 1e-10 {
+				if got := mustDistance(t, pair[0], pair[1], tt.rename); math.Abs(got-tt.want) > 1e-10 {
 					t.Fatalf("production distance = %g, want %g", got, tt.want)
 				}
 			}
@@ -114,7 +114,7 @@ func TestDistanceComparison(t *testing.T) {
 	ts := newTrees()
 	leaf := ts.node("a")
 	a, b := ts.node("r", leaf), ts.node("r", ts.node("w", leaf))
-	current, reference := distance(a, b, .3), referenceDistance(a, b, .3)
+	current, reference := mustDistance(t, a, b, .3), referenceDistance(a, b, .3)
 	if current != 1 || reference != 1 {
 		t.Fatalf("internal insertion: current = %g, reference = %g", current, reference)
 	}
@@ -132,7 +132,7 @@ func g(y int) { prepare(); { consume(y) }; finish() }`},
 		t.Run(tt.name, func(t *testing.T) {
 			nodes := normalizeSource(t, newTrees(), tt.source, false)
 			a, b := nodes[0], nodes[1]
-			current, reference := distance(a, b, .3), referenceDistance(a, b, .3)
+			current, reference := mustDistance(t, a, b, .3), referenceDistance(a, b, .3)
 			if math.Abs(reference-current) > 1e-10 {
 				t.Fatalf("reference TED %g differs from production distance %g", reference, current)
 			}
@@ -145,6 +145,9 @@ func g(y int) { prepare(); { consume(y) }; finish() }`},
 func FuzzReferenceDistance(f *testing.F) {
 	f.Add([]byte{0, 1, 2}, []byte{1, 2, 0})
 	f.Add([]byte{2, 0, 1, 0}, []byte{0, 1})
+	// Exercise chains and branching descendants even in seed-only CI runs.
+	f.Add([]byte{0, 4, 4}, []byte{1, 5, 5})
+	f.Add([]byte{0, 1, 8, 2}, []byte{1, 2, 9, 3})
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		if len(a) > 12 || len(b) > 12 {
 			t.Skip()
@@ -164,7 +167,7 @@ func FuzzReferenceDistance(f *testing.F) {
 		x, y := makeTree(a), makeTree(b)
 		for _, rename := range []float64{.3, 1, 3} {
 			got := referenceDistance(x, y, rename)
-			forward, reverse := distance(x, y, rename), distance(y, x, rename)
+			forward, reverse := mustDistance(t, x, y, rename), mustDistance(t, y, x, rename)
 			if got < math.Abs(float64(x.size-y.size))-1e-10 ||
 				math.Abs(got-referenceDistance(y, x, rename)) > 1e-10 ||
 				math.Abs(got-forward) > 1e-10 ||
@@ -229,12 +232,21 @@ func BenchmarkDistanceComparison(b *testing.B) {
 	} {
 		for _, algorithm := range []struct {
 			name string
-			run  func(*tree, *tree, float64) float64
-		}{{"current", distance}, {"reference", referenceDistance}} {
+			run  func(*tree, *tree, float64) (float64, error)
+		}{
+			{"current", distance},
+			{"reference", func(a, b *tree, rename float64) (float64, error) {
+				return referenceDistance(a, b, rename), nil
+			}},
+		} {
 			b.Run(tt.name+"/"+algorithm.name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					if got := algorithm.run(tt.a, tt.b, .3); math.Abs(got-tt.want) > 1e-10 {
+					got, err := algorithm.run(tt.a, tt.b, .3)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if math.Abs(got-tt.want) > 1e-10 {
 						b.Fatalf("distance = %g, want %g", got, tt.want)
 					}
 				}
