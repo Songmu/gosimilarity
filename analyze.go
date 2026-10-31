@@ -178,6 +178,25 @@ func (r *report) comparePair(ctx context.Context, i, j int, opts *options) error
 	a, b := &r.Declarations[i], &r.Declarations[j]
 	d := 0.0
 	if a.tree != b.tree {
+		if opts.threshold > 0 && opts.renameCost > 0 {
+			for _, decl := range []*declaration{a, b} {
+				if decl.labels == nil {
+					var err error
+					decl.labels, err = treeLabelCounts(ctx, decl.tree)
+					if err != nil {
+						return err
+					}
+				}
+			}
+			upper := labelSimilarityUpperBound(a.tree, b.tree, a.labels, b.labels, opts.renameCost)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if upper < opts.threshold {
+				r.Summary.PrunedPairs++
+				return nil
+			}
+		}
 		r.Summary.DistanceCalls++
 		var err error
 		d, err = distance(ctx, a.tree, b.tree, opts.renameCost)
@@ -221,6 +240,7 @@ func (r *report) finishComparison() {
 	for i := range r.Declarations {
 		r.Declarations[i].tree = nil
 		r.Declarations[i].body = ""
+		r.Declarations[i].labels = nil
 	}
 	slices.SortFunc(r.Diagnostics, func(a, b diagnostic) int {
 		if c := strings.Compare(a.File, b.File); c != 0 {

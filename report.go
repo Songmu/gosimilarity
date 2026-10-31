@@ -30,6 +30,7 @@ type declaration struct {
 	Source    string   `json:"source,omitempty"`
 	tree      *tree
 	body      string
+	labels    map[string]int
 }
 
 type pair struct {

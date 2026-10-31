@@ -166,6 +166,14 @@ func FuzzReferenceDistance(f *testing.F) {
 			return ts.node(string(rune('a'+len(data)%4)), forest...)
 		}
 		x, y := makeTree(a), makeTree(b)
+		labelsX, err := treeLabelCounts(context.Background(), x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		labelsY, err := treeLabelCounts(context.Background(), y)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, rename := range []float64{.3, 1, 3} {
 			got := referenceDistance(x, y, rename)
 			forward, reverse := mustDistance(t, x, y, rename), mustDistance(t, y, x, rename)
@@ -176,6 +184,9 @@ func FuzzReferenceDistance(f *testing.F) {
 				(got == 0) != equalTrees(x, y) {
 				t.Fatalf("TED differs at rename cost %g: reference=%g forward=%g reverse=%g",
 					rename, got, forward, reverse)
+			}
+			if upper := labelSimilarityUpperBound(x, y, labelsX, labelsY, rename); upper < similarity(x, y, forward) {
+				t.Fatalf("label bound %g is below actual similarity at rename cost %g", upper, rename)
 			}
 		}
 	})

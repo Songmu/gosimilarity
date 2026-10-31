@@ -116,6 +116,42 @@ func TestCompareExactPruning(t *testing.T) {
 	}
 }
 
+func TestCompareLabelPruning(t *testing.T) {
+	for _, calls := range []int{2, 700} {
+		t.Run(fmt.Sprint(calls), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			src := "package example\nfunc calls() {\n" + strings.Repeat("work()\n", calls) +
+				"}\nfunc increments() {\n" + strings.Repeat("x++\n", calls*3/2) + "}\n"
+			writeFile(t, "different.go", src)
+			r, code, diagnostics := runJSON(t, "different.go", "--min-lines", "0")
+			if code != 0 || r.Status != "complete" || len(r.Declarations) != 2 ||
+				r.Declarations[0].Nodes != r.Declarations[1].Nodes || len(r.Pairs) != 0 ||
+				r.Summary.CandidatePairs != 1 || r.Summary.PrunedPairs != 1 || r.Summary.DistanceCalls != 0 {
+				t.Fatalf("provably dissimilar pair entered DP: code=%d report=%+v diagnostics=%s", code, r, diagnostics)
+			}
+		})
+	}
+}
+
+func TestCompareLabelBoundRounding(t *testing.T) {
+	ts := newTrees()
+	a, b := make([]*tree, 500), make([]*tree, 500)
+	for i := range a {
+		a[i], b[i] = ts.node("x"), ts.node("y")
+	}
+	x, y := ts.node("root", a...), ts.node("root", b...)
+	threshold := similarity(x, y, mustDistance(t, x, y, .3))
+	r := newReport()
+	r.Declarations = []declaration{
+		{ID: "d1", Kind: "function", tree: x, Nodes: x.size},
+		{ID: "d2", Kind: "function", tree: y, Nodes: y.size},
+	}
+	compare(context.Background(), options{threshold: threshold, renameCost: .3}, r)
+	if r.Status != "complete" || len(r.Pairs) != 1 || r.Pairs[0].Similarity != threshold {
+		t.Fatalf("label bound pruned a threshold-boundary match: %+v", r)
+	}
+}
+
 func TestCompareRanking(t *testing.T) {
 	ts := newTrees()
 	tree := ts.node("same")

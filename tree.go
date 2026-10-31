@@ -182,6 +182,40 @@ func chainNodes(root *tree) []*tree {
 	}
 }
 
+func treeLabelCounts(ctx context.Context, root *tree) (map[string]int, error) {
+	counts := make(map[string]int)
+	var visit func(*tree) error
+	visit = func(t *tree) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		counts[t.label]++
+		for _, child := range t.children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := visit(root); err != nil {
+		return nil, err
+	}
+	return counts, nil
+}
+
+// Ignoring tree order and ancestry gives an admissible label-count edit bound.
+func labelSimilarityUpperBound(a, b *tree, labelsA, labelsB map[string]int, rename float64) float64 {
+	common := 0
+	for label, count := range labelsA {
+		common += min(count, labelsB[label])
+	}
+	small, large := min(a.size, b.size), max(a.size, b.size)
+	lower := float64(large-small) + min(rename, 2)*float64(small-common)
+	// DP additions can round down; leave room for their accumulated rounding.
+	margin := 8 * 0x1p-52 * (float64(a.size) + float64(b.size) + 1)
+	return min(1, math.Max(0, 1-lower/float64(large))+margin)
+}
+
 // Chains and leaf sequences reduce exactly to string edit distance. Equal
 // prefixes and suffixes can be removed before allocating the two DP rows.
 func labelDistance(ctx context.Context, a, b []*tree, rename float64) (float64, error) {
